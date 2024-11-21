@@ -1,0 +1,38 @@
+[
+  {
+    "ParameterKey": "ImagePath",
+    "ParameterValue": "dgtlmoon/changedetection.io:latest"
+  },
+  {
+    "ParameterKey": "AppPort",
+    "ParameterValue": "5000"
+  },
+  {
+    "ParameterKey": "DomainName",
+    "ParameterValue": "changes.billbaran.us"
+  },
+  {
+    "ParameterKey": "EfsFilesystemId",
+    "ParameterValue": "fs-03493a86decf73c80"
+  },
+  {
+    "ParameterKey": "EfsMountPath",
+    "ParameterValue": "/datastore"
+  },
+  {
+    "ParameterKey": "R53HostedZoneId",
+    "ParameterValue": "Z0927352H55TBS393ZU1"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "t3.nano"
+  },
+  {
+    "ParameterKey": "UserEmail",
+    "ParameterValue": "bill.baran@gmail.com"
+  },
+  {
+    "ParameterKey": "PrivateSubnetCIDR",
+    "ParameterValue": "10.0.2.0/24"
+  }
+]

@@ -1,0 +1,417 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'ECS cluster with single EC2 instance, ALB, EFS'
+
+Parameters:
+  AppPort:
+    Type: Number
+    Description: The port the application runs on on the EC2 instance
+
+  DomainName:
+    Type: String
+    Description: The domain name to use for the application
+
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    AllowedValues: [t3.nano, t3.micro, t3.small, t3.medium]
+    Default: t3.nano
+
+  PrivateSubnetCIDR:
+    Type: String
+    Description: CIDR block for the new private subnet
+
+  Region:
+    Type: String
+    Description: Region to deploy to
+    Default: us-west-2
+
+  EnvFileBucket:
+    Type: String
+    Description: The S3 bucket where configuration files can be found
+    Default: cloudformation-build-925032123076
+
+Mappings:
+  RegionMap:
+    us-west-2:
+      R53HostedZoneId: Z0927352H55TBS393ZU1
+      InetGateway: igw-0c98bc473fc513fa2
+      UserPoolId: us-west-2_doR1tPhkA
+      UserPoolArn: arn:aws:cognito-idp:us-west-2:925032123076:userpool/us-west-2_doR1tPhkA
+      UserPoolDomain: foundation925032123076
+      KeyPairName: minecraftkey # Only for debugging when EC2 is public
+
+Resources:
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      MapPublicIpOnLaunch: true # Remove later
+      VpcId: !ImportValue foundation-VPCId
+      CidrBlock: !Ref PrivateSubnetCIDR
+      AvailabilityZone: !ImportValue foundation-PublicSubnet1AZ
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName} Private Subnet"
+
+  DefaultPublicRoute: # Remove later
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !FindInMap [RegionMap, !Ref Region, InetGateway]
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !ImportValue foundation-VPCId
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName} Private Route Table"
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+#  PrivateRouteToNAT:
+#    Type: AWS::EC2::Route
+#    Properties:
+#      RouteTableId: !Ref PrivateRouteTable
+#      DestinationCidrBlock: 0.0.0.0/0
+#      NatGatewayId: !ImportValue foundation-NATGatewayId
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${AWS::StackName}-cluster"
+
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ECS Security Group
+      VpcId: !ImportValue foundation-VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref AppPort
+          ToPort: !Ref AppPort
+          SourceSecurityGroupId: !ImportValue foundation-ALBSecurityGroupId
+        - IpProtocol: tcp # Home ip for debugging; Useless if not public
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 24.117.28.212/32
+        - IpProtocol: tcp # AWS EC2 Instance Connect service; Useless if not public
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 18.237.140.160/29
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  ECSInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref ECSInstanceRole]
+
+  ECSInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonElasticFileSystemClientFullAccess
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ECSInstanceRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:CreateCluster
+                  - ecs:DeregisterContainerInstance
+                  - ecs:DiscoverPollEndpoint
+                  - ecs:Poll
+                  - ecs:RegisterContainerInstance
+                  - ecs:StartTelemetrySession
+                  - ecs:UpdateContainerInstancesState
+                  - ecs:Submit*
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - ssm:UpdateInstanceInformation
+                Resource: '*'
+
+  SSMServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ssm.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Path: /service-role/
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: ami-02fd4e1237c808705  # Amazon ECS-Optimized Amazon Linux 2 AMI @ us-west-2
+      IamInstanceProfile: !Ref ECSInstanceProfile
+      KeyName: !FindInMap [RegionMap, !Ref Region, KeyPairName]
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: "true" # Change this to false after debugging
+          DeviceIndex: "0"
+          GroupSet:
+            - !Ref ECSSecurityGroup
+          SubnetId: !Ref PrivateSubnet
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+          yum install -y amazon-efs-utils
+          # Check DNS resolution
+          # TODO: Remove after debugging done. Nothing task-specific should be 
+          #       in this template
+          nslookup fs-0f3349d2b03e4b705.efs.${AWS::Region}.amazonaws.com
+          # Ensure SSM agent is installed and running
+          yum install -y amazon-ssm-agent
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region}
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckPath: /
+      Name: !Sub "${AWS::StackName}-tg"
+      Port: !Ref AppPort
+      Protocol: HTTP
+      TargetType: instance
+      VpcId: !ImportValue foundation-VPCId
+      Targets:
+        - Id: !Ref EC2Instance
+          Port: !Ref AppPort
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            ContentType: text/plain
+            MessageBody: "Please log in"
+            StatusCode: "401"
+      LoadBalancerArn: !ImportValue foundation-ALBArn
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !ImportValue foundation-SSLCertArn
+
+  ALBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: authenticate-cognito
+          AuthenticateCognitoConfig:
+            UserPoolArn: !FindInMap [RegionMap, !Ref Region, UserPoolArn]
+            UserPoolClientId: !Ref UserPoolClient
+            UserPoolDomain: !FindInMap [RegionMap, !Ref Region, UserPoolDomain]
+          Order: 1
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+          Order: 2
+      Conditions:
+        - Field: host-header
+          Values:
+            - !Ref DomainName
+      ListenerArn: !Ref ALBListener
+      Priority: 100
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: AccessSecrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - ssm:GetParameters
+                Resource: '*'  # Scope this down to specific secrets/parameters as needed
+        - PolicyName: CloudWatchLogsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/${AWS::StackName}:*"
+
+  Route53RecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !FindInMap [RegionMap, !Ref Region, R53HostedZoneId]
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !ImportValue foundation-ALBDNSName
+        HostedZoneId: !ImportValue foundation-ALBHostedZoneId
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${AWS::StackName}UserPoolClient"
+      GenerateSecret: true
+      UserPoolId: !FindInMap [RegionMap, !Ref Region, UserPoolId]
+      CallbackURLs:
+        - !Sub https://${DomainName}/oauth2/idpresponse
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      SupportedIdentityProviders:
+        - COGNITO
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+#  SSMEndpoint:
+#    Type: AWS::EC2::VPCEndpoint
+#    Properties:
+#      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+#      VpcId: !ImportValue foundation-VPCId
+#      VpcEndpointType: Interface
+#      SubnetIds:
+#        - !Ref PrivateSubnet
+#      SecurityGroupIds:
+#        - !Ref VPCEndpointSecurityGroup
+#      PrivateDnsEnabled: true
+
+#  EC2MessagesEndpoint:
+#    Type: AWS::EC2::VPCEndpoint
+#    Properties:
+#      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+#      VpcId: !ImportValue foundation-VPCId
+#      VpcEndpointType: Interface
+#      SubnetIds:
+#        - !Ref PrivateSubnet
+#      SecurityGroupIds:
+#        - !Ref VPCEndpointSecurityGroup
+#      PrivateDnsEnabled: true
+
+#  SSMMessagesEndpoint:
+#    Type: AWS::EC2::VPCEndpoint
+#    Properties:
+#      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+#      VpcId: !ImportValue foundation-VPCId
+#      VpcEndpointType: Interface
+#      SubnetIds:
+#        - !Ref PrivateSubnet
+#      SecurityGroupIds:
+#        - !Ref VPCEndpointSecurityGroup
+#      PrivateDnsEnabled: true
+
+#  ECSEndpoint:
+#    Type: AWS::EC2::VPCEndpoint
+#    Properties:
+#      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecs
+#      VpcId: !ImportValue foundation-VPCId
+#      VpcEndpointType: Interface
+#      SubnetIds:
+#        - !Ref PrivateSubnet
+#      SecurityGroupIds:
+#        - !Ref VPCEndpointSecurityGroup
+#      PrivateDnsEnabled: true
+
+#  VPCEndpointSecurityGroup:
+#    Type: AWS::EC2::SecurityGroup
+#    Properties:
+#      GroupDescription: Security group for VPC endpoints
+#      VpcId: !ImportValue foundation-VPCId
+#      SecurityGroupIngress:
+#        - IpProtocol: tcp
+#          FromPort: 443
+#          ToPort: 443
+#          SourceSecurityGroupId: !Ref ECSSecurityGroup
+#        - IpProtocol: tcp
+#          FromPort: 2049
+#          ToPort: 2049
+#          SourceSecurityGroupId: !Ref ECSSecurityGroup
+
+#  EFSEndpoint:
+#    Type: AWS::EC2::VPCEndpoint
+#    Properties:
+#      ServiceName: !Sub com.amazonaws.${AWS::Region}.elasticfilesystem
+#      VpcId: !ImportValue foundation-VPCId
+#      VpcEndpointType: Interface
+#      SubnetIds:
+#        - !Ref PrivateSubnet
+#      SecurityGroupIds:
+#        - !Ref VPCEndpointSecurityGroup
+#      PrivateDnsEnabled: true
+
+Outputs:
+  WebsiteURL:
+    Description: URL for the application
+    Value: !Sub 'https://${DomainName}'
+
+  AppPort:
+    Description: Port the app is on that is being served by the load balancer
+    Value: !Ref AppPort
+    Export:
+      Name: !Sub "${AWS::StackName}-AppPort"
+
+  ECSClusterArn:
+    Description: ECS Cluster Arn
+    Value: !GetAtt ECSCluster.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ECSClusterArn"
+
+  ECSTaskExecutionRoleArn:
+    Description: ECSTaskExecutionRole arn
+    Value: !GetAtt ECSTaskExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ECSTaskExecutionRoleArn"
+
+  ECSSecurityGroupId:
+    Description: ECSSecurityGroup Id
+    Value: !GetAtt ECSSecurityGroup.GroupId
+    Export:
+      Name: !Sub "${AWS::StackName}-ECSSecurityGroupId"
+
+  PrivateSubnetId:
+    Description: The subnet where the ECS cluster was created in
+    Value: !GetAtt PrivateSubnet.SubnetId
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnetId"
+

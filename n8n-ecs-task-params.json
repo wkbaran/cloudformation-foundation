@@ -1,0 +1,22 @@
+[
+  {
+    "ParameterKey": "ImagePath",
+    "ParameterValue": "docker.n8n.io/n8nio/n8n"
+  },
+  {
+    "ParameterKey": "EfsFilesystemId",
+    "ParameterValue": "fs-0f3349d2b03e4b705"
+  },
+  {
+    "ParameterKey": "EfsMountPath",
+    "ParameterValue": "/home/node/.n8n"
+  },
+  {
+    "ParameterKey": "RdsClusterArn",
+    "ParameterValue": "arn:aws:rds:us-west-2:925032123076:cluster:n8n-1"
+  },
+  {
+    "ParameterKey": "DatabaseSecretArn",
+    "ParameterValue": "arn:aws:secretsmanager:us-west-2:925032123076:secret:/dev/rds/credentials-FkaZEJ"
+  }
+]

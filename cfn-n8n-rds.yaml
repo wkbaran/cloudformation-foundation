@@ -1,0 +1,215 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RDS PostgreSQL Instance with t4g.micro'
+
+Parameters:
+  DatabaseName:
+    Type: String
+    Description: Name of the database to create
+
+  Environment:
+    Type: String
+    Description: Environment name (dev, prod, etc)
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+
+  DatabaseSubnetCidrAZ1:
+    Type: String
+    Description: CIDR block for the database subnet (e.g., 10.0.4.0/24)
+
+  DatabaseSubnetCidrAZ2:
+    Type: String
+    Description: CIDR block for the database subnet in AZ2 (e.g., 10.0.5.0/24)
+
+  BackupRetentionPeriod:
+    Type: Number
+    Description: Number of days to retain backups
+    Default: 7
+    MinValue: 0
+
+Resources:
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: Parameter group for PostgreSQL 15
+      Family: postgres15
+      Parameters:
+        client_encoding: 'UTF8'
+        # ssl: '0'  # Disable SSL requirement
+        rds.force_ssl: '0'  # Disable forced SSL
+        password_encryption: 'md5'
+
+  DatabaseSubnetAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !ImportValue foundation-VPCId
+      CidrBlock: !Ref DatabaseSubnetCidrAZ1
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-db-subnet-az1
+
+  DatabaseSubnetAZ2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !ImportValue foundation-VPCId
+      CidrBlock: !Ref DatabaseSubnetCidrAZ2
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-db-subnet-az2
+
+  DatabaseRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !ImportValue foundation-VPCId
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-db-rt
+
+  DatabaseSubnetAZ1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DatabaseSubnetAZ1
+      RouteTableId: !Ref DatabaseRouteTable
+
+  DatabaseSubnetAZ2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DatabaseSubnetAZ2
+      RouteTableId: !Ref DatabaseRouteTable
+
+  DatabaseOutboundRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref DatabaseRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !ImportValue foundation-NATGatewayId
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS instance
+      SubnetIds:
+        - !Ref DatabaseSubnetAZ1
+        - !Ref DatabaseSubnetAZ2
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS instance
+      VpcId: !ImportValue foundation-VPCId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  DBSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '/${Environment}/rds/credentials'
+      Description: RDS database credentials
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "postgres"}'
+        GenerateStringKey: "password"
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+
+  PostgreSQLInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceClass: db.t4g.micro
+      Engine: postgres
+      EngineVersion: '15.4'
+      AllocatedStorage: 20
+      StorageType: gp3
+      DBName: !Ref DatabaseName
+      MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref DBSecret, ':SecretString:username}}' ]]
+      MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref DBSecret, ':SecretString:password}}' ]]
+      DBParameterGroupName: !Ref DBParameterGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      PubliclyAccessible: false
+      BackupRetentionPeriod: !Ref BackupRetentionPeriod
+      MultiAZ: false
+      AutoMinorVersionUpgrade: true
+      # Performance Insights is not available on t4g.micro
+      DeletionProtection: false  # Set to true for production
+
+  # SSM Parameters for n8n
+  SSMDatabaseName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/n8n/${Environment}/DB_POSTGRESDB_DATABASE'
+      Type: String
+      Value: !Ref DatabaseName
+
+  SSMDatabaseHost:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/n8n/${Environment}/DB_POSTGRESDB_HOST'
+      Type: String
+      Value: !GetAtt PostgreSQLInstance.Endpoint.Address
+
+  SSMDatabaseType:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/n8n/${Environment}/DB_TYPE'
+      Type: String
+      Value: postgresdb
+
+Outputs:
+  DatabaseSubnetAZ1Id:
+    Description: ID of the database subnet in AZ1
+    Value: !Ref DatabaseSubnetAZ1
+    Export:
+      Name: !Sub ${AWS::StackName}-DatabaseSubnetAZ1Id
+
+  DatabaseSubnetAZ2Id:
+    Description: ID of the database subnet in AZ2
+    Value: !Ref DatabaseSubnetAZ2
+    Export:
+      Name: !Sub ${AWS::StackName}-DatabaseSubnetAZ2Id
+
+  InstanceEndpoint:
+    Description: RDS Instance Endpoint
+    Value: !GetAtt PostgreSQLInstance.Endpoint.Address
+    Export:
+      Name: !Sub ${AWS::StackName}-InstanceEndpoint
+
+  InstancePort:
+    Description: RDS Instance Port
+    Value: !GetAtt PostgreSQLInstance.Endpoint.Port
+    Export:
+      Name: !Sub ${AWS::StackName}-InstancePort
+
+  DatabaseName:
+    Description: Database Name
+    Value: !Ref DatabaseName
+    Export:
+      Name: !Sub ${AWS::StackName}-DatabaseName
+
+  InstanceArn:
+    Description: RDS Instance ARN
+    Value: !Sub arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:${PostgreSQLInstance}
+    Export:
+      Name: !Sub ${AWS::StackName}-InstanceArn
+
+  SecurityGroupId:
+    Description: Security Group ID for RDS Instance
+    Value: !Ref RDSSecurityGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-SecurityGroupId
+
+  SecretArn:
+    Description: Secret ARN for database credentials
+    Value: !Ref DBSecret
+    Export:
+      Name: !Sub ${AWS::StackName}-SecretArn

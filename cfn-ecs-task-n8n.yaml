@@ -1,0 +1,176 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'ECS Task Definition for n8n with RDS PostgreSQL backend'
+
+Parameters:
+  ImagePath:
+    Type: String
+    Description: Docker image path
+
+  EfsMountPath:
+    Description: Path to mount EFS volume to on EC2 instances
+    Type: String
+
+  EfsFilesystemId:
+    Description: Id of EFS data volume
+    Type: String
+
+  Environment:
+    Type: String
+    Description: Environment name (dev, prod, etc)
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+
+  DatabaseSecretArn:
+    Description: Database Secret ARN
+    Type: String
+
+Resources:
+  CloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AWS::StackName}"
+      RetentionInDays: 14
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EFS Security Group
+      VpcId: !ImportValue foundation-VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !ImportValue n8n-ecs-cluster-ECSSecurityGroupId
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref ECSTaskSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  MountTarget:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFilesystemId
+      SubnetId: !ImportValue n8n-ecs-cluster-PrivateSubnetId
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AWS::StackName}-task"
+      ExecutionRoleArn: !ImportValue n8n-ecs-cluster-ECSTaskExecutionRoleArn
+      TaskRoleArn: !Ref ECSTaskRole
+      NetworkMode: awsvpc
+      ContainerDefinitions:
+        - Name: !Ref AWS::StackName
+          Image: !Ref ImagePath
+          PortMappings:
+            - ContainerPort: !ImportValue n8n-ecs-cluster-AppPort
+              HostPort: !ImportValue n8n-ecs-cluster-AppPort
+          MountPoints:
+            - SourceVolume: efs-volume
+              ContainerPath: !Ref EfsMountPath
+          Memory: 256
+          Essential: true
+          Environment:
+            - Name: ECS_VOLUME_PLUGIN_TIMEOUT
+              Value: "1m"
+            - Name: ECS_AVAILABLE_LOGGING_DRIVERS
+              Value: '["json-file","awslogs"]'
+          Secrets:
+            - Name: DB_POSTGRESDB_DATABASE
+              ValueFrom: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/n8n/${Environment}/DB_POSTGRESDB_DATABASE'
+            - Name: DB_POSTGRESDB_HOST
+              ValueFrom: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/n8n/${Environment}/DB_POSTGRESDB_HOST'
+            - Name: DB_POSTGRESDB_USER
+              ValueFrom: !Sub "${DatabaseSecretArn}:username::"
+            - Name: DB_POSTGRESDB_PASSWORD
+              ValueFrom: !Sub "${DatabaseSecretArn}:password::"
+            - Name: DB_TYPE
+              ValueFrom: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/n8n/${Environment}/DB_TYPE'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudWatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+      Volumes:
+        - Name: efs-volume
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref EfsFilesystemId
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              IAM: ENABLED
+
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub "${AWS::StackName}-service"
+      Cluster: !ImportValue n8n-ecs-cluster-ECSClusterArn
+      TaskDefinition: !Ref ECSTaskDefinition
+      DesiredCount: 1
+      LaunchType: EC2
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+            - !ImportValue n8n-ecs-cluster-PrivateSubnetId
+          SecurityGroups:
+            - !Ref ECSTaskSecurityGroup
+
+  ECSTaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS tasks
+      VpcId: !ImportValue foundation-VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !ImportValue n8n-ecs-cluster-AppPort
+          ToPort: !ImportValue n8n-ecs-cluster-AppPort
+          SourceSecurityGroupId: !ImportValue foundation-ALBSecurityGroupId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  RDSIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !ImportValue n8n-rds-SecurityGroupId  # The RDS security group
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref ECSTaskSecurityGroup  # The ECS Task security group
+
+  RDSIngressRuleVPC:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !ImportValue n8n-rds-SecurityGroupId
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      CidrIp: 10.0.0.0/16
+#      CidrIp: !ImportValue foundation-VPCCidr
+
+# TODO: Try opening 5432 to the ECS Cluster instead of Task
