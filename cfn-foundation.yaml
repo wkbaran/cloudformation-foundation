@@ -182,15 +182,3 @@ Outputs:
     Value: !GetAtt PublicSubnet2.AvailabilityZone
     Export:
       Name: !Sub "${AWS::StackName}-PublicSubnet2AZ"
-
-#  DefaultUserPoolId:
-#    Description: Default user pool id
-#    Value: !GetAtt UserPool.UserPoolId
-#    Export:
-#      Name: !Sub "${AWS::StackName}-DefaultUserPoolId"
-#
-#  UserPoolArn:
-#    Description: Default user pool id
-#    Value: !GetAtt UserPool.Arn
-#    Export:
-#      Name: !Sub "${AWS::StackName}-UserPoolArn"

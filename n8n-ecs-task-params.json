@@ -1,7 +1,15 @@
 [
   {
+    "ParameterKey": "DomainName",
+    "ParameterValue": "n8n.billbaran.us"
+  },
+  {
     "ParameterKey": "ImagePath",
     "ParameterValue": "docker.n8n.io/n8nio/n8n"
+  },
+  {
+    "ParameterKey": "AppPort",
+    "ParameterValue": "5678"
   },
   {
     "ParameterKey": "EfsFilesystemId",
@@ -18,5 +26,21 @@
   {
     "ParameterKey": "DatabaseSecretArn",
     "ParameterValue": "arn:aws:secretsmanager:us-west-2:925032123076:secret:/dev/rds/credentials-FkaZEJ"
+  },
+  {
+    "ParameterKey": "R53HostedZoneId",
+    "ParameterValue": "Z0927352H55TBS393ZU1"
+  },
+  {
+    "ParameterKey": "UserPoolId",
+    "ParameterValue": "us-west-2_doR1tPhkA"
+  },
+  {
+    "ParameterKey": "UserPoolArn",
+    "ParameterValue": "arn:aws:cognito-idp:us-west-2:925032123076:userpool/us-west-2_doR1tPhkA"
+  },
+  {
+    "ParameterKey": "UserPoolDomain",
+    "ParameterValue": "foundation925032123076"
   }
 ]

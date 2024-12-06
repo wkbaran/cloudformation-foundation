@@ -1,0 +1,10 @@
+[
+    {
+        "ParameterKey": "PrivateSubnetCIDR",
+        "ParameterValue": "10.0.3.0/24"
+    },
+    {
+        "ParameterKey": "InetGateway",
+        "ParameterValue": "igw-0c98bc473fc513fa2"
+    }
+]
