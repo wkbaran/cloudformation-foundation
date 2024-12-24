@@ -153,26 +153,6 @@ Resources:
       Certificates:
         - CertificateArn: !ImportValue foundation-SSLCertArn
 
-  ALBListenerRule:
-    Type: AWS::ElasticLoadBalancingV2::ListenerRule
-    Properties:
-      Actions:
-        - Type: authenticate-cognito
-          AuthenticateCognitoConfig:
-            UserPoolArn: !Ref UserPoolArn
-            UserPoolClientId: !Ref UserPoolClient
-            UserPoolDomain: !Ref UserPoolDomain
-          Order: 1
-        - Type: forward
-          TargetGroupArn: !Ref ALBTargetGroup
-          Order: 2
-      Conditions:
-        - Field: host-header
-          Values:
-            - !Ref DomainName
-      ListenerArn: !Ref ALBListener
-      Priority: 100
-
   ECSTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -290,3 +270,64 @@ Resources:
       CidrIp: 10.0.0.0/16
 #      CidrIp: !ImportValue foundation-VPCCidr
 
+  MaintenancePageRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            ContentType: text/html
+            MessageBody: |
+              <!DOCTYPE html>
+              <html>
+                <head>
+                  <title>Maintenance Mode</title>
+                  <style>
+                    body { font-family: Arial, sans-serif; text-align: center; padding-top: 50px; }
+                    h1 { color: #333; }
+                    p { color: #666; }
+                  </style>
+                </head>
+                <body>
+                  <h1>System Maintenance</h1>
+                  <p>The system is currently undergoing maintenance or in power-saving mode.</p>
+                  <p>Please try again later.</p>
+                </body>
+              </html>
+            StatusCode: "503"
+      Conditions:
+        - Field: host-header
+          Values:
+            - !Ref DomainName
+        - Field: path-pattern
+          Values:
+            - /*
+      ListenerArn: !Ref ALBListener
+      Priority: 50  # Start with higher priority, change to 1 for maintenance mode
+
+  ALBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: authenticate-cognito
+          AuthenticateCognitoConfig:
+            UserPoolArn: !Ref UserPoolArn
+            UserPoolClientId: !Ref UserPoolClient
+            UserPoolDomain: !Ref UserPoolDomain
+          Order: 1
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+          Order: 2
+      Conditions:
+        - Field: host-header
+          Values:
+            - !Ref DomainName
+      ListenerArn: !Ref ALBListener
+      Priority: 100
+
+Outputs:
+  MaintenanceRuleArn:
+    Description: ARN of the maintenance page rule (for CLI usage)
+    Value: !Ref MaintenancePageRule
+    Export:
+      Name: !Sub "${AWS::StackName}-MaintenanceRuleArn"

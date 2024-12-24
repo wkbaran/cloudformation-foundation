@@ -136,6 +136,11 @@ aws ecs update-service --cluster n8n-ecs-cluster-cluster --service n8n-ecs-task-
 ```
 aws ecs update-service --cluster n8n-ecs-cluster-cluster --service n8n-ecs-task-service --desired-count 1
 ```
+### Enable maintenance mode
+```bash
+aws elbv2 set-rule-priorities --rule-priorities \
+  RuleArn=arn:aws:elasticloadbalancing:us-west-2:925032123076:listener-rule/app/founda-Appli-PuYPyboNP4Rc/0d5aab57c40cddc1/c16dcddef6a189c5/1e5763ff40f168ba,Priority=101
+```
 
 ## To-Do
 - [ ] Add ALB listener rule to display a maintenance page when app is down to task template
