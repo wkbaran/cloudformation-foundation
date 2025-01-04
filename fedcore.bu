@@ -1,0 +1,16 @@
+variant: fiot
+version: 1.0.0
+passwd:
+  users:
+    - name: core
+      groups: [ sudo, docker ]
+      password_hash: $y$j9T$8R59E46KO5Js7Xrk8cgre.$Dcx0YTpK0gRXv5GJFPJW.ff6bbXQTWEnOQBWQCgQXy5
+      ssh_authorized_keys:
+        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINqDLc2/ks/1NJvGeQhTxF2JX6F6lVD+ddsjEnXSJYxj bill.baran@gmail.com
+storage:
+  files:
+    - path: /etc/hostname
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: nucdocker
