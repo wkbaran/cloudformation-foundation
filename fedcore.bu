@@ -13,4 +13,35 @@ storage:
       mode: 0644
       overwrite: true
       contents:
-        inline: nucdocker
+        inline: nuc1
+    - path: /etc/NetworkManager/NetworkManager.conf
+      overwrite: true
+      contents:
+        inline: |
+          [main]
+          dns=default
+
+          [logging]
+      mode: 0644
+      user:
+        id: 0
+      group:
+        id: 0
+    # Ensure resolv.conf is a real file, not a symlink
+    - path: /etc/resolv.conf
+      overwrite: true
+      contents:
+        inline: ""
+      mode: 0644
+      user:
+        id: 0
+      group:
+        id: 0
+systemd:
+  units:
+    - name: coreos-migrate-to-systemd-resolved.service
+      enabled: false
+      mask: true
+    - name: systemd-resolved.service
+      enabled: false
+      mask: true
