@@ -1,0 +1,148 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for CloudFront with VPC Origins for secure access to EC2'
+
+Parameters:
+  VpcId:
+    Description: ID of the VPC where your EC2 instance resides
+    Type: AWS::EC2::VPC::Id
+
+  EC2InstanceId:
+    Description: ID of the existing EC2 instance
+    Type: String
+
+  EC2PrivateDNS:
+    Description: Private DNS or IP of the existing EC2 instance
+    Type: String
+
+  EC2SubnetId:
+    Description: Subnet ID where the EC2 instance is located
+    Type: AWS::EC2::Subnet::Id
+
+  PrimaryDomainName:
+    Description: Primary domain name for your application (e.g., ntfy.billbaran.us)
+    Type: String
+    
+  AlternateDomainName:
+    Description: Single alternate domain name (optional)
+    Type: String
+    Default: ""
+
+  CertificateARN:
+    Description: ARN of the ACM certificate for your domain (must be in us-east-1)
+    Type: String
+
+Resources:
+  # Security Group for EC2 to allow CloudFront traffic
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EC2 instance allowing CloudFront VPC Origins traffic
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          Description: "Allow CloudFront VPC Origins traffic"
+          CidrIp: 0.0.0.0/0  # This will be restricted by CloudFront service
+
+  # CloudFront VPC Origin Configuration
+  VPCOrigin:
+    Type: AWS::CloudFront::VPCOrigin
+    Properties:
+      VpcOriginConfig:
+        VpcId: !Ref VpcId
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroup
+        SubnetIds:
+          - !Ref EC2SubnetId
+        OriginAccessRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/CloudFrontVPCOriginRole"
+
+  # CloudFront Origin Request Policy
+  CloudFrontOriginRequestPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Sub "${AWS::StackName}-origin-request-policy"
+        HeadersConfig:
+          HeaderBehavior: allViewer
+        CookiesConfig:
+          CookieBehavior: all
+        QueryStringsConfig:
+          QueryStringBehavior: all
+
+  # CloudFront Cache Policy
+  CloudFrontCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub "${AWS::StackName}-cache-policy"
+        DefaultTTL: 0
+        MinTTL: 0
+        MaxTTL: 0
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: false
+          EnableAcceptEncodingBrotli: false
+          HeadersConfig:
+            HeaderBehavior: none
+          CookiesConfig:
+            CookieBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  # CloudFront Distribution
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: VPCOrigin
+    Properties:
+      DistributionConfig:
+        Aliases: !If 
+          - HasAlternateDomain
+          - [!Ref PrimaryDomainName, !Ref AlternateDomainName]
+          - [!Ref PrimaryDomainName]
+        Origins:
+          - Id: EC2Origin
+            DomainName: !Ref EC2PrivateDNS
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 60
+            OriginCustomHeaders:
+              - HeaderName: X-Origin-Verify
+                HeaderValue: !Sub "${AWS::StackName}-secret-header"
+            VpcOriginConfig:
+              VpcOriginId: !Ref VPCOrigin
+        Enabled: true
+        DefaultCacheBehavior:
+          TargetOriginId: EC2Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: !Ref CloudFrontCachePolicy
+          OriginRequestPolicyId: !Ref CloudFrontOriginRequestPolicy
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateARN
+          MinimumProtocolVersion: TLSv1.2_2021
+          SslSupportMethod: sni-only
+
+Conditions:
+  HasAlternateDomain: !Not [!Equals [!Ref AlternateDomainName, ""]]
+
+Outputs:
+  CloudFrontDomainName:
+    Description: Domain name of the CloudFront distribution
+    Value: !GetAtt CloudFrontDistribution.DomainName
+
+  PrimaryWebsiteURL:
+    Description: URL for the primary website
+    Value: !Sub "https://${PrimaryDomainName}"

@@ -1,5 +1,64 @@
-
 # Bill's Cloudformation Templates
+
+## Jobs Server
+This is intended to be a standalone docker server to build on top of.  
+Build on just the vpcinet stack. No load balancer, single instance in a single public subnet.  
+
+### TLS
+Commands used for setting up TLS...
+
+1. *Generate TLS Certificates (On Your Local Machine)*
+You'll need:
+ - A CA certificate
+ - A server certificate (for Docker)
+ - A client certificate (for remote management)
+
+*Generate a Root CA:*
+```bash
+mkdir -p ~/docker-tls && cd ~/docker-tls
+openssl genrsa -aes256 -out ca-key.pem 4096
+openssl req -new -x509 -days 365 -key ca-key.pem -sha256 -out ca.pem
+```
+
+*Generate a Server Key and Cert:*
+```bash
+openssl genrsa -out server-key.pem 4096
+openssl req -new -key server-key.pem -out server.csr
+echo subjectAltName = IP:YOUR_INSTANCE_IP > extfile.cnf
+openssl x509 -req -days 365 -sha256 -in server.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out server-cert.pem -extfile extfile.cnf
+```
+
+*Generate a Client Key and Cert:*
+```bash
+openssl genrsa -out client-key.pem 4096
+openssl req -new -key client-key.pem -out client.csr
+echo extendedKeyUsage = clientAuth > extfile-client.cnf
+openssl x509 -req -days 365 -sha256 -in client.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out client-cert.pem -extfile extfile-client.cnf
+```
+
+2. *Upload Certificates to AWS SSM Parameter Store*
+```bash
+aws ssm put-parameter --name "/docker/ca.pem" --type "SecureString" --value "$(cat ca.pem)"
+aws ssm put-parameter --name "/docker/server-cert.pem" --type "SecureString" --value "$(cat server-cert.pem)"
+aws ssm put-parameter --name "/docker/server-key.pem" --type "SecureString" --value "$(cat server-key.pem)"
+```
+
+3. *Add the following to EC2 UserData*
+```bash
+# Create certificate directory
+mkdir -p /etc/docker/certs
+
+# Fetch TLS certificates from SSM
+aws ssm get-parameter --name "/docker/ca.pem" --with-decryption --query "Parameter.Value" --output text > /etc/docker/certs/ca.pem
+aws ssm get-parameter --name "/docker/server-cert.pem" --with-decryption --query "Parameter.Value" --output text > /etc/docker/certs/server-cert.pem
+aws ssm get-parameter --name "/docker/server-key.pem" --with-decryption --query "Parameter.Value" --output text > /etc/docker/certs/server-key.pem
+
+# Set correct permissions
+chmod 600 /etc/docker/certs/*
+chown root:root /etc/docker/certs/*
+```
+
+## Foundation Template
 The foundation template is the VPC, Internet Gateway, public subnet and NAT Gateway - so 
 everything to get to the internet.
 
@@ -13,7 +72,6 @@ If persistent state is needed, that should be created in a separate template and
 necessary identifiers to import them into the task template. This way, the task implementation can 
 be changed without effecting the datastore.
 
-## Foundation Template
 This creates a VPC and what's needed to give apps a public gateway to the internet.
 Namely:
 - Internet Gateway
@@ -21,111 +79,10 @@ Namely:
 - NAT Gateway to give private subnets access to the Internet
 - Application Load Balancer - It's expected that each app will have its own Listener
 
-### Prerequisites
-First, create the following resources in AWS:
-- Route 53 zone
-- Wildcard cert
-
-### Parameters
-- VpcCidr
-- SSLCertificateArn
-
-### Resources:
-- VPC
-- InternetGateway
-- InternetGatewayAttachment
-- PublicSubnet1
-- PublicSubnet2
-- PublicRouteTable
-- DefaultPublicRoute
-- PublicSubnet1RouteTableAssociation
-- PublicSubnet2RouteTableAssociation
-- NATGateway
-- NATGatewayEIP
-- ALBSecurityGroup
-- ApplicationLoadBalancer
-
-### Outputs
-- SSLCertificationArn
-- VPCId
-- VPCCidr
-- NATGatewayId
-- ALBArn
-- ALBDNSName
-- ALBHostedZoneId
-- ALBSecurityGroupId
-- PublicSubnet1AZ
-- PublicSubnet2AZ
-
 ## ECS Cluster
 My default source of compute. Currently only has one
 
-### Prerequisites
-- User pool (Referenced in ECS cluster when ALB Listener is configured)
-
-### Parameters
-- Region
-- CIDR block for private Subnet
-- Internet Gateway Id
-- EC2 Instance Type
-
-### Resources
-- PrivateSubnet
-- DefaultPublicRoute
-- PrivateRouteTable
-- PrivateSubnetRouteTableAssociation
-- ECSCluster
-- ECSSecurityGroup
-- ECSInstanceProfile
-- ECSInstanceRole
-- SSMServiceRole
-- ECSTaskExecutionRole
-- LaunchTemplate
-- AutoScalingGroup
-- ECSCapacityProvider
-- ClusterCapacityProviderAssociation
-
-### Outputs
-- ECSClusterArn
-- ECSTaskExecutionRoleArn
-- ECSSecurityGroupId
-- PrivateSubnetId
-
 ## ECS Service / Task Template
-
-### Prerequisites
-First, create the following resources in AWS:
-- Route 53 zone
-
-### Parameters
-- DomainName
-- ImagePath - Docker Hub image path
-- AppPort - Port to expose for app
-- EfsFileSystemId
-- EfsMountPath - Path to mount EFS volume onto
-- Environment
-- DatabaseSecretArn - Secret that has the db username nad password
-- R53HostedZoneId
-- UserPoolId
-- UserPoolArn
-- UserPoolDomain
-
-### Resources
-- CloudWatchLogsGroup
-- ECSTaskRole
-- EFSSecurityGroup
-- MountTarget
-- ALBTargetGroup
-- ALBIngressRule
-- UserPoolClient
-- ALBListener
-- ALBListenerRule
-- ECSTaskDefinition
-- ECSService
-- ECSTaskSecurityGroup
-- Route53RecordSet
-- RDSIngressRule
-- RDSIngressRuleVPC
 
 ## Commands
 ### Disabling Service 

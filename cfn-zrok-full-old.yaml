@@ -1,0 +1,452 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Simple CloudFormation template for personal zrok infrastructure on a single node'
+
+Parameters:
+  CertificateArn:
+    Type: String
+    Description: ARN of the existing ACM certificate for the domain
+    
+  PublicHostedZoneId:
+    Type: String
+    Description: ID of the public Route53 hosted zone for the domain
+    
+  PrivateHostedZoneId:
+    Type: String
+    Description: ID of your private Route53 hosted zone
+
+  DomainName:
+    Type: String
+    Description: Public domain name for zrok service (e.g., zrok.yourdomain.com)
+
+  ZitiControllerDomain:
+    Type: String
+    Description: Private domain for the Ziti Controller (e.g., ziti-controller.private.lan)
+
+  ZitiRouterDomain:
+    Type: String
+    Description: Private domain for the Ziti Router (e.g., ziti-router.private.lan)
+
+  ZitiVersion:
+    Type: String
+    Description: Ziti Version
+
+  AdminCIDR:
+    Type: String
+    Description: CIDR range for administrative and client access (e.g., your IP address as x.x.x.x/32)
+    AllowedPattern: ^(?:[0-9]{1,3}\.){3}[0-9]{1,3}/(?:[0-9]|[1-2][0-9]|3[0-2])$
+    ConstraintDescription: Must be a valid IP CIDR range of the form x.x.x.x/x
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      AMI: ami-00e71da3dbb6033a9  # Amazon Linux 2, ECS Optimized
+    us-east-2:
+      AMI: ami-067236b7b2a566f9c
+    us-west-1:
+      AMI: ami-0c72e6c88f6802def
+    us-west-2:
+      AMI: ami-09153d4b2086079f5
+
+Resources:
+  # VPC and Network Resources
+  ZrokVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-vpc
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-igw
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref ZrokVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ZrokVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-public-subnet-1
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ZrokVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-public-subnet-2
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ZrokVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-public-rt
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # Security Groups
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ALB
+      VpcId: !Ref ZrokVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  ZrokSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for combined zrok services
+      VpcId: !Ref ZrokVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 6262
+          ToPort: 6262
+          CidrIp: !Ref AdminCIDR  # Ziti Controller
+        - IpProtocol: tcp
+          FromPort: 3022
+          ToPort: 3022
+          CidrIp: !Ref AdminCIDR  # Ziti Router
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AdminCIDR  # SSH
+
+  # EC2 Instance Role
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Path: /
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref EC2Role
+
+  # Combined EC2 Instance
+  ZrokInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.small
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI]
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroupIds:
+        - !Ref ZrokSecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # Update and install packages
+          dnf update -y
+          dnf install -y docker
+
+          # Start and enable Docker
+          systemctl start docker
+          systemctl enable docker
+          
+          # Install unified Ziti binary
+          curl -L https://github.com/openziti/ziti/releases/download/v${ZitiVersion}/ziti-linux-amd64-${ZitiVersion}.tar.gz -o ziti.tar.gz
+          tar xf ziti.tar.gz
+          mv ziti /usr/local/bin/
+          chmod +x /usr/local/bin/ziti
+
+          # Set up PKI
+          mkdir -p /opt/ziti/pki
+          cd /opt/ziti/pki
+
+          # Create PKI structure
+          ziti pki create ca --pki-root /opt/ziti/pki --ca-name root
+          ziti pki create intermediate --pki-root /opt/ziti/pki --ca-name root --intermediate-name intermediate
+          ziti pki create server --pki-root /opt/ziti/pki --ca-chain intermediate --server-name controller --dns ${ZitiControllerDomain},localhost --ip 127.0.0.1
+          ziti pki create server --pki-root /opt/ziti/pki --ca-chain intermediate --server-name router --dns ${ZitiRouterDomain},localhost --ip 127.0.0.1
+
+          # Initialize Controller with config
+          mkdir -p /opt/ziti/controller
+          cd /opt/ziti/controller
+
+          cat > ctrl.yml <<EOL
+          v: 3
+          db: bolt:///opt/ziti/controller/ziti.db
+          identity:
+            cert: /opt/ziti/pki/intermediate/certs/controller-server.cert
+            key: /opt/ziti/pki/intermediate/keys/controller-server.key
+            ca: /opt/ziti/pki/intermediate/certs/intermediate.cert
+          ctrl:
+            listener: tls:0.0.0.0:6262
+            options:
+              advertiseAddress: ${ZitiControllerDomain}:6262
+          web:
+            - name: all-apis-endpoint
+              bindPoints:
+                - interface: 0.0.0.0:1280
+                  address: 0.0.0.0:1280
+          events:
+            jsonLogger:
+              subscriptions:
+                - type: events
+                  include:
+                    - ALL
+          EOL
+
+          # Create systemd service for Controller
+          cat > /etc/systemd/system/ziti-controller.service <<EOL
+          [Unit]
+          Description=OpenZiti Controller
+          After=network.target
+
+          [Service]
+          Type=simple
+          WorkingDirectory=/opt/ziti/controller
+          ExecStart=/usr/local/bin/ziti controller run ctrl.yml
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+          EOL
+
+          # Initialize Router with config
+          mkdir -p /opt/ziti/router
+          cd /opt/ziti/router
+
+          cat > router.yml <<EOL
+          v: 3
+          identity:
+            cert: /opt/ziti/pki/intermediate/certs/router-server.cert
+            key: /opt/ziti/pki/intermediate/keys/router-server.key
+            ca: /opt/ziti/pki/intermediate/certs/intermediate.cert
+          ctrl:
+            endpoint: tls:127.0.0.1:6262
+          link:
+            dialers:
+              - binding: transport
+            listeners:
+              - binding: transport
+                bind: tls:0.0.0.0:10080
+                advertise: tls:${ZitiRouterDomain}:10080
+          edge:
+            csr:
+              country: US
+              province: ID
+              locality: Boise
+              organization: billbaran.us
+              organizationalUnit: IT
+              sans:
+                dns:
+                  - ${ZitiRouterDomain}
+                  - localhost
+                ip:
+                  - 127.0.0.1
+          healthChecks:
+            - checkType: ready
+              interval: 10s
+              timeout: 5s
+              initialDelay: 15s
+          EOL
+
+          # Create systemd service for Router
+          cat > /etc/systemd/system/ziti-router.service <<EOL
+          [Unit]
+          Description=OpenZiti Router
+          After=ziti-controller.service
+          Requires=ziti-controller.service
+
+          [Service]
+          Type=simple
+          WorkingDirectory=/opt/ziti/router
+          ExecStart=/usr/local/bin/ziti router run router.yml
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+          EOL
+
+          # Start services
+          systemctl daemon-reload
+          systemctl enable ziti-controller
+          systemctl start ziti-controller
+
+          # Wait for Controller to be ready
+          sleep 30
+
+          # Create and enroll the router
+          cd /opt/ziti/controller
+          ziti edge create edge-router "${ZitiRouterDomain}" --jwt-output-file /opt/ziti/router/token.jwt
+          
+          cd /opt/ziti/router
+          ziti router enroll router.yml --jwt /opt/ziti/router/token.jwt
+          
+          # Start Router
+          systemctl enable ziti-router
+          systemctl start ziti-router
+
+          # Wait for Router to be ready
+          sleep 15
+
+          # Create initial admin token and save it
+          mkdir -p /opt/ziti/tokens
+          ziti edge create auth-policy zrok-policy --admin-enabled true
+          ADMIN_TOKEN=$(ziti edge create service-policy zrok-service-policy --service-roles "@zrok" --identity-roles "@zrok-clients" --jwt-output-file /opt/ziti/tokens/admin.jwt)
+          echo $ADMIN_TOKEN > /opt/ziti/tokens/admin.token
+
+          # Pull and run zrok server
+          docker pull openziti/zrok:latest
+          docker run -d \
+            --name zrok \
+            -p 8080:8080 \
+            -e ZROK_DOMAIN=${DomainName} \
+            openziti/zrok:latest
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-instance
+
+  # Load Balancer
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${AWS::StackName}-alb
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+      Subnets: 
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+
+  HTTPSListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${AWS::StackName}-tg
+      Port: 8080
+      Protocol: HTTP
+      TargetType: instance
+      VpcId: !Ref ZrokVPC
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Targets:
+        - Id: !Ref ZrokInstance
+          Port: 8080
+
+  # DNS Records
+  ZrokDNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref PublicHostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt LoadBalancer.DNSName
+        HostedZoneId: !GetAtt LoadBalancer.CanonicalHostedZoneID
+
+  ControllerDNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref PrivateHostedZoneId
+      Name: !Ref ZitiControllerDomain
+      Type: A
+      TTL: 300
+      ResourceRecords:
+        - !GetAtt ZrokInstance.PrivateIp
+
+  RouterDNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref PrivateHostedZoneId
+      Name: !Ref ZitiRouterDomain
+      Type: A
+      TTL: 300
+      ResourceRecords:
+        - !GetAtt ZrokInstance.PrivateIp
+
+Outputs:
+  ZrokURL:
+    Description: URL for the zrok service
+    Value: !Sub https://${DomainName}
+  
+  InstancePrivateIP:
+    Description: Private IP of the instance
+    Value: !GetAtt ZrokInstance.PrivateIp
+  
+  InstancePublicIP:
+    Description: Public IP of the instance
+    Value: !GetAtt ZrokInstance.PublicIp
+  
+  SSHCommand:
+    Description: Command to SSH into the instance
+    Value: !Sub "ssh ec2-user@${ZrokInstance.PublicIp}"
+
+  AdminTokenLocation:
+    Description: Location of the admin token file on the instance
+    Value: "/opt/ziti/tokens/admin.token"

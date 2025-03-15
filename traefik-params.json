@@ -1,0 +1,34 @@
+[
+  {
+    "ParameterKey": "SSLCertificateArn",
+    "ParameterValue": "arn:aws:acm:us-west-2:925032123076:certificate/51259292-5867-4d02-8965-0a83e6a3e522"
+  },
+  {
+    "ParameterKey": "VpcCidr",
+    "ParameterValue": "10.0.0.0/16"
+  },
+  {
+    "ParameterKey": "SubnetId",
+    "ParameterValue": "10.0.0.0/24"
+  },
+  {
+    "ParameterKey": "HostedZoneId",
+    "ParameterValue": "Z0927352H55TBS393ZU1"
+  },
+  {
+    "ParameterKey": "PrivateHostedZoneId",
+    "ParameterValue": "Z09836011VGZMT65Q2977"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "t4g.micro"
+  },
+  {
+    "ParameterKey": "AdminAllowedIp",
+    "ParameterValue": "24.117.28.212/32"
+  },
+  {
+    "ParameterKey": "ImageAMI",
+    "ParameterValue": "ami-024b7afd2f40e4bc1"
+  }
+]

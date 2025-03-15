@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'ECS Task Definition for n8n with RDS PostgreSQL backend'
+Description: 'CloudFormation template for zrok deployment with debugging capabilities'
 
 Parameters:
   DomainName:
@@ -44,20 +44,171 @@ Parameters:
 
   UserPoolArn:
     Description: User Pool Arn
-    Type: String
+    Type: String 
 
   UserPoolDomain:
     Description: User Pool Domain
     Type: String
+    
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    Description: EC2 instance type
+    AllowedValues:
+      - t3.small
+      - t3.medium
+      - t3.large
+      - m5.large
+
+  SSHLocation:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+
+Mappings:
+  RegionMap:
+    us-west-2:
+      AMI: ami-01450e8988a4e7f44 # Amazon Linux 2023 AMI (adjust if needed)
 
 Resources:
-  CloudWatchLogsGroup:
-    Type: AWS::Logs::LogGroup
+  # VPC and Networking Resources
+  VPC:
+    Type: AWS::EC2::VPC
     Properties:
-      LogGroupName: !Sub "/ecs/${AWS::StackName}"
-      RetentionInDays: 14
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-VPC
 
-  ECSTaskRole:
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PublicSubnet
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateSubnet
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-IGW
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  EIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+    DependsOn: GatewayAttachment
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt EIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-NATGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PublicRT
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateRT
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Security Groups
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the zrok instance
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+        - IpProtocol: tcp
+          FromPort: !Ref AppPort
+          ToPort: !Ref AppPort
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-InstanceSG
+
+  # Instance IAM Role
+  ZrokInstanceRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -65,269 +216,236 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Service: ecs-tasks.amazonaws.com
+              Service: ec2.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: ZrokInstancePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref DatabaseSecretArn
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                  - elasticfilesystem:DescribeMountTargets
+                Resource: !Sub arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${EfsFilesystemId}
+
+  ZrokInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ZrokInstanceRole
+
+  # EFS Mount Target
+  EFSMountTarget:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFilesystemId
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroups:
+        - !GetAtt EFSSecurityGroup.GroupId
 
   EFSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: EFS Security Group
-      VpcId: !ImportValue foundation-VPCId
+      GroupDescription: Security group for EFS access
+      VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 2049
           ToPort: 2049
-          SourceSecurityGroupId: !ImportValue n8n-ecs-cluster-ECSSecurityGroupId
-        - IpProtocol: tcp
-          FromPort: 2049
-          ToPort: 2049
-          SourceSecurityGroupId: !Ref ECSTaskSecurityGroup
-      SecurityGroupEgress:
-        - IpProtocol: -1
-          FromPort: -1
-          ToPort: -1
-          CidrIp: 0.0.0.0/0
+          SourceSecurityGroupId: !GetAtt InstanceSecurityGroup.GroupId
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-EFSSG
 
-  MountTarget:
-    Type: AWS::EFS::MountTarget
+  # Zrok Instance
+  ZrokInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: EFSMountTarget
     Properties:
-      FileSystemId: !Ref EfsFilesystemId
-      SubnetId: !ImportValue n8n-ecs-cluster-PrivateSubnetId
-      SecurityGroups:
-        - !Ref EFSSecurityGroup
+      ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      IamInstanceProfile: !Ref ZrokInstanceProfile
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref InstanceSecurityGroup
+          SubnetId: !Ref PublicSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
 
-  ALBTargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      HealthCheckPath: /
-      Name: !Sub "${AWS::StackName}-tg"
-      Port: !Ref AppPort
-      Protocol: HTTP
-      TargetType: ip
-      VpcId: !ImportValue foundation-VPCId
+          # Update and install required packages
+          dnf update -y
+          dnf install -y amazon-efs-utils docker amazon-cloudwatch-agent
 
-  ALBIngressRule:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      GroupId: !ImportValue n8n-ecs-cluster-ECSSecurityGroupId
-      IpProtocol: tcp
-      FromPort: !Ref AppPort
-      ToPort: !Ref AppPort
-      SourceSecurityGroupId: !ImportValue foundation-ALBSecurityGroupId
+          # Start Docker service
+          systemctl enable docker
+          systemctl start docker
 
-  UserPoolClient:
-    Type: AWS::Cognito::UserPoolClient
-    Properties:
-      ClientName: !Sub "${AWS::StackName}UserPoolClient"
-      GenerateSecret: true
-      UserPoolId: !Ref UserPoolId
-      CallbackURLs:
-        - !Sub https://${DomainName}/oauth2/idpresponse
-      AllowedOAuthFlows:
-        - code
-      AllowedOAuthFlowsUserPoolClient: true
-      AllowedOAuthScopes:
-        - email
-        - openid
-        - profile
-      SupportedIdentityProviders:
-        - COGNITO
-      ExplicitAuthFlows:
-        - ALLOW_USER_SRP_AUTH
-        - ALLOW_REFRESH_TOKEN_AUTH
+          # Set up EFS mount
+          mkdir -p ${EfsMountPath}
+          echo "${EfsFilesystemId}:/ ${EfsMountPath} efs _netdev,tls,iam 0 0" >> /etc/fstab
+          mount -a
 
-  ALBListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      DefaultActions:
-        - Type: fixed-response
-          FixedResponseConfig:
-            ContentType: text/plain
-            MessageBody: "Please log in"
-            StatusCode: "401"
-      LoadBalancerArn: !ImportValue foundation-ALBArn
-      Port: 443
-      Protocol: HTTPS
-      Certificates:
-        - CertificateArn: !ImportValue foundation-SSLCertArn
+          # Get database credentials from Secrets Manager
+          DB_SECRET=$(aws secretsmanager get-secret-value --secret-id ${DatabaseSecretArn} --region ${AWS::Region} --query SecretString --output text)
+          DB_HOST=$(echo $DB_SECRET | jq -r '.host')
+          DB_PORT=$(echo $DB_SECRET | jq -r '.port')
+          DB_NAME=$(echo $DB_SECRET | jq -r '.dbname')
+          DB_USER=$(echo $DB_SECRET | jq -r '.username')
+          DB_PASS=$(echo $DB_SECRET | jq -r '.password')
 
-  ECSTaskDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      Family: !Sub "${AWS::StackName}-task"
-      ExecutionRoleArn: !ImportValue n8n-ecs-cluster-ECSTaskExecutionRoleArn
-      TaskRoleArn: !Ref ECSTaskRole
-      NetworkMode: awsvpc
-      ContainerDefinitions:
-        - Name: !Ref AWS::StackName
-          Image: !Ref ImagePath
-          PortMappings:
-            - ContainerPort: !Ref AppPort
-              HostPort: !Ref AppPort
-          MountPoints:
-            - SourceVolume: efs-volume
-              ContainerPath: !Ref EfsMountPath
-          Memory: 256
-          Essential: true
-          Environment:
-            - Name: ECS_VOLUME_PLUGIN_TIMEOUT
-              Value: "1m"
-            - Name: ECS_AVAILABLE_LOGGING_DRIVERS
-              Value: '["json-file","awslogs"]'
-          Secrets:
-            - Name: DB_POSTGRESDB_DATABASE
-              ValueFrom: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/n8n/${Environment}/DB_POSTGRESDB_DATABASE'
-            - Name: DB_POSTGRESDB_HOST
-              ValueFrom: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/n8n/${Environment}/DB_POSTGRESDB_HOST'
-            - Name: DB_POSTGRESDB_USER
-              ValueFrom: !Sub "${DatabaseSecretArn}:username::"
-            - Name: DB_POSTGRESDB_PASSWORD
-              ValueFrom: !Sub "${DatabaseSecretArn}:password::"
-            - Name: DB_TYPE
-              ValueFrom: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/n8n/${Environment}/DB_TYPE'
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref CloudWatchLogsGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: ecs
-      Volumes:
-        - Name: efs-volume
-          EFSVolumeConfiguration:
-            FilesystemId: !Ref EfsFilesystemId
-            TransitEncryption: ENABLED
-            AuthorizationConfig:
-              IAM: ENABLED
+          # Create a zrok configuration file
+          cat > /opt/zrok-config.json << EOF
+          {
+            "environment": "${Environment}",
+            "domain_name": "${DomainName}",
+            "app_port": ${AppPort},
+            "user_pool_id": "${UserPoolId}",
+            "user_pool_arn": "${UserPoolArn}",
+            "user_pool_domain": "${UserPoolDomain}",
+            "database": {
+              "host": "$DB_HOST",
+              "port": "$DB_PORT",
+              "name": "$DB_NAME",
+              "user": "$DB_USER",
+              "password": "$DB_PASS"
+            },
+            "debug_mode": true
+          }
+          EOF
 
-  ECSService:
-    DependsOn: ALBListener  # Add this dependency
-    Type: AWS::ECS::Service
-    Properties:
-      ServiceName: !Sub "${AWS::StackName}-service"
-      Cluster: !ImportValue n8n-ecs-cluster-ECSClusterArn
-      TaskDefinition: !Ref ECSTaskDefinition
-      DesiredCount: 1
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          AssignPublicIp: DISABLED
-          Subnets:
-            - !ImportValue n8n-ecs-cluster-PrivateSubnetId
-          SecurityGroups:
-            - !Ref ECSTaskSecurityGroup
-      LoadBalancers:
-        - ContainerName: !Ref AWS::StackName
-          ContainerPort: !Ref AppPort
-          TargetGroupArn: !Ref ALBTargetGroup
-      CapacityProviderStrategy:
-        - CapacityProvider: !Sub "n8n-ecs-cluster-capacity-provider"  # Make sure this matches your capacity provider name
-          Weight: 1
-          Base: 1  # This tells ECS to maintain at least one instance
+          # Pull the Docker image and run the container
+          docker pull ${ImagePath}
+          docker run -d --name zrok \
+            -p ${AppPort}:${AppPort} \
+            -v ${EfsMountPath}:${EfsMountPath} \
+            -v /opt/zrok-config.json:/app/config.json \
+            --restart unless-stopped \
+            ${ImagePath}
 
-  ECSTaskSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Security group for ECS tasks
-      VpcId: !ImportValue foundation-VPCId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: !Ref AppPort
-          ToPort: !Ref AppPort
-          SourceSecurityGroupId: !ImportValue foundation-ALBSecurityGroupId
-      SecurityGroupEgress:
-        - IpProtocol: -1
-          FromPort: -1
-          ToPort: -1
-          CidrIp: 0.0.0.0/0
+          # Set up CloudWatch Agent with basic configuration
+          cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << EOF
+          {
+            "agent": {
+              "metrics_collection_interval": 60,
+              "run_as_user": "root"
+            },
+            "logs": {
+              "logs_collected": {
+                "files": {
+                  "collect_list": [
+                    {
+                      "file_path": "/var/log/user-data.log",
+                      "log_group_name": "${AWS::StackName}-UserData",
+                      "log_stream_name": "{instance_id}"
+                    },
+                    {
+                      "file_path": "/var/log/messages",
+                      "log_group_name": "${AWS::StackName}-Messages",
+                      "log_stream_name": "{instance_id}"
+                    },
+                    {
+                      "file_path": "/var/log/docker",
+                      "log_group_name": "${AWS::StackName}-Docker",
+                      "log_stream_name": "{instance_id}"
+                    }
+                  ]
+                }
+              }
+            },
+            "metrics": {
+              "metrics_collected": {
+                "mem": {
+                  "measurement": ["mem_used_percent"]
+                },
+                "disk": {
+                  "measurement": ["disk_used_percent"],
+                  "resources": ["/"]
+                }
+              }
+            }
+          }
+          EOF
 
-  Route53RecordSet:
+          # Start the CloudWatch Agent
+          systemctl enable amazon-cloudwatch-agent
+          systemctl start amazon-cloudwatch-agent
+
+          # Signal CloudFormation that the instance is ready
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ZrokInstance --region ${AWS::Region}
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-ZrokInstance
+        - Key: Environment
+          Value: !Ref Environment
+
+  # DNS Record
+  ZrokDNSRecord:
     Type: AWS::Route53::RecordSet
     Properties:
       HostedZoneId: !Ref R53HostedZoneId
       Name: !Ref DomainName
       Type: A
-      AliasTarget:
-        DNSName: !ImportValue foundation-ALBDNSName
-        HostedZoneId: !ImportValue foundation-ALBHostedZoneId
-
-  RDSIngressRule:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      GroupId: !ImportValue n8n-rds-SecurityGroupId  # The RDS security group
-      IpProtocol: tcp
-      FromPort: 5432
-      ToPort: 5432
-      SourceSecurityGroupId: !Ref ECSTaskSecurityGroup  # The ECS Task security group
-
-  RDSIngressRuleVPC:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      GroupId: !ImportValue n8n-rds-SecurityGroupId
-      IpProtocol: tcp
-      FromPort: 5432
-      ToPort: 5432
-      CidrIp: 10.0.0.0/16
-#      CidrIp: !ImportValue foundation-VPCCidr
-
-  MaintenancePageRule:
-    Type: AWS::ElasticLoadBalancingV2::ListenerRule
-    Properties:
-      Actions:
-        - Type: fixed-response
-          FixedResponseConfig:
-            ContentType: text/html
-            MessageBody: |
-              <!DOCTYPE html>
-              <html>
-                <head>
-                  <title>Maintenance Mode</title>
-                  <style>
-                    body { font-family: Arial, sans-serif; text-align: center; padding-top: 50px; }
-                    h1 { color: #333; }
-                    p { color: #666; }
-                  </style>
-                </head>
-                <body>
-                  <h1>System Maintenance</h1>
-                  <p>The system is currently undergoing maintenance or in power-saving mode.</p>
-                  <p>Please try again later.</p>
-                </body>
-              </html>
-            StatusCode: "503"
-      Conditions:
-        - Field: host-header
-          Values:
-            - !Ref DomainName
-        - Field: path-pattern
-          Values:
-            - /*
-      ListenerArn: !Ref ALBListener
-      Priority: 50  # Start with higher priority, change to 1 for maintenance mode
-
-  ALBListenerRule:
-    Type: AWS::ElasticLoadBalancingV2::ListenerRule
-    Properties:
-      Actions:
-        - Type: authenticate-cognito
-          AuthenticateCognitoConfig:
-            UserPoolArn: !Ref UserPoolArn
-            UserPoolClientId: !Ref UserPoolClient
-            UserPoolDomain: !Ref UserPoolDomain
-          Order: 1
-        - Type: forward
-          TargetGroupArn: !Ref ALBTargetGroup
-          Order: 2
-      Conditions:
-        - Field: host-header
-          Values:
-            - !Ref DomainName
-      ListenerArn: !Ref ALBListener
-      Priority: 100
+      TTL: 300
+      ResourceRecords:
+        - !GetAtt ZrokInstance.PublicIp
 
 Outputs:
-  MaintenanceRuleArn:
-    Description: ARN of the maintenance page rule (for CLI usage)
-    Value: !Ref MaintenancePageRule
+  VpcId:
+    Description: VPC ID
+    Value: !Ref VPC
     Export:
-      Name: !Sub "${AWS::StackName}-MaintenanceRuleArn"
+      Name: !Sub ${AWS::StackName}-VpcId
+
+  PublicSubnetId:
+    Description: Public Subnet ID
+    Value: !Ref PublicSubnet
+    Export:
+      Name: !Sub ${AWS::StackName}-PublicSubnetId
+
+  PrivateSubnetId:
+    Description: Private Subnet ID
+    Value: !Ref PrivateSubnet
+    Export:
+      Name: !Sub ${AWS::StackName}-PrivateSubnetId
+
+  InstanceId:
+    Description: Instance ID of the zrok server
+    Value: !Ref ZrokInstance
+    Export:
+      Name: !Sub ${AWS::StackName}-InstanceId
+
+  InstancePublicIP:
+    Description: Public IP address of the zrok server
+    Value: !GetAtt ZrokInstance.PublicIp
+    Export:
+      Name: !Sub ${AWS::StackName}-InstancePublicIP
+
+  DomainEndpoint:
+    Description: Domain endpoint for zrok access
+    Value: !Sub https://${DomainName}
+    Export:
+      Name: !Sub ${AWS::StackName}-DomainEndpoint
+
+  SSHCommand:
+    Description: Command to SSH into the instance
+    Value: !Sub ssh -i path/to/${KeyName}.pem ec2-user@${ZrokInstance.PublicDnsName}

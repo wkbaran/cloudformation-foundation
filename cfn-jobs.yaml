@@ -1,0 +1,151 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Deploys an EC2 instance running docker with a public Route 53 record."
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: "The VPC to use for the EC2 instance."
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: "Subnet where the EC2 instance will be launched."
+
+  HostedZoneId:
+    Type: String
+    Description: "The Route 53 Hosted Zone ID for the public domain (jobs.billbaran.us)."
+
+  InstanceType:
+    Type: String
+    Description: "Instance type for the EC2 instance."
+
+  AdminAllowedIP:
+    Type: String
+    Description: "IP allowed to access the jobs server."
+
+  ImageAmi:
+    Type: String
+    Description: Host image AMI
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: "Name of an existing EC2 KeyPair to enable SSH access"
+
+Resources:
+  # Security Group for EC2
+  JobsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow HTTP and admin access to jobs"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2376
+          ToPort: 2376
+          CidrIp: !Ref AdminAllowedIP
+          Description: Home docker admin via TLS
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AdminAllowedIP
+          Description: Home SSH
+      Tags:
+        - Key: Name
+          Value: "Jobs-SG"
+
+  DockerInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DockerSSMRead
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource: 
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/docker/*"
+
+  DockerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref DockerInstanceRole
+
+  # EC2 Instance for Jobs docker
+  JobsEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref JobsSecurityGroup
+      ImageId: !Ref ImageAmi
+      IamInstanceProfile: !Ref DockerInstanceProfile
+      KeyName: !Ref KeyName
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -ex
+          systemctl stop ecs
+          systemctl disable ecs
+          systemctl enable --now docker
+
+          # Install AWS CLI (if not included in AMI)
+          yum install -y aws-cli
+
+          # Create certificate directory
+          mkdir -p /etc/docker/certs
+          
+          # Fetch TLS certificates from SSM
+          aws ssm get-parameter --name "/docker/ca.pem" --with-decryption --query "Parameter.Value" \
+            --output text > /etc/docker/certs/ca.pem
+          aws ssm get-parameter --name "/docker/server-cert.pem" --with-decryption --query \
+            "Parameter.Value" --output text > /etc/docker/certs/server-cert.pem
+          aws ssm get-parameter --name "/docker/server-key.pem" --with-decryption --query \
+            "Parameter.Value" --output text > /etc/docker/certs/server-key.pem
+          
+          # Set correct permissions
+          chmod 600 /etc/docker/certs/*
+          chown root:root /etc/docker/certs/*
+
+          # Add override configuration
+          mkdir -p /etc/systemd/system/docker.service.d
+          cat <<EOF > /etc/systemd/system/docker.service.d/override.conf
+          [Service]
+          ExecStart=
+          ExecStart=/usr/bin/dockerd --tlsverify --tlscacert=/etc/docker/certs/ca.pem \
+              --tlscert=/etc/docker/certs/server-cert.pem --tlskey=/etc/docker/certs/server-key.pem \
+              -H fd:// -H tcp://0.0.0.0:2376 --containerd=/run/containerd/containerd.sock $OPTIONS \
+              $DOCKER_STORAGE_OPTIONS $DOCKER_ADD_RUNTIMES
+          EOF
+
+          # Reload systemd and restart Docker
+          systemctl daemon-reload
+          systemctl restart docker
+          systemctl enable docker
+
+          # create a default 'main' network. 
+          # Expect most services to be able to talk to each other
+          docker network create main
+      Tags:
+        - Key: Name
+          Value: "jobs-docker"
+
+  # Route 53 Record for Public Domain (jobs.billbaran.us)
+  Route53PublicJobs:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: jobs.billbaran.us
+      Type: A
+      TTL: "300"
+      ResourceRecords:
+        - !GetAtt JobsEC2Instance.PublicIp

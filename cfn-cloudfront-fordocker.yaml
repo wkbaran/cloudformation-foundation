@@ -1,0 +1,61 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFront SSL termination for Traefik Reverse Proxy'
+
+Parameters:
+  DomainName:
+    Type: String
+    Description: 'Primary domain name (e.g., web.billbaran.us)'
+
+  CertificateArn:
+    Type: String
+    Description: 'ARN of the SSL certificate in AWS Certificate Manager'
+
+  HostedZoneId:
+    Type: String
+    Description: 'Route 53 Hosted Zone ID'
+
+  DockerHost:
+    Type: String
+    Description: 'Public hostname of the Docker host (e.g., jobs.billbaran.us)'
+
+Resources:
+  CloudFrontDistribution:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Aliases:
+          - !Ref DomainName
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateArn
+          SslSupportMethod: 'sni-only'
+        DefaultCacheBehavior:
+          ViewerProtocolPolicy: 'redirect-to-https'
+          AllowedMethods: ['GET', 'HEAD', 'OPTIONS', 'PUT', 'PATCH', 'POST', 'DELETE']
+          TargetOriginId: 'TraefikOrigin'
+          ForwardedValues:
+            QueryString: true
+            Headers:
+              - 'Host'
+        Origins:
+          - Id: 'TraefikOrigin'
+            DomainName: !Ref DockerHost
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: 'match-viewer'
+
+  Route53Record:
+    Type: 'AWS::Route53::RecordSet'
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: 'A'
+      AliasTarget:
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        HostedZoneId: 'Z2FDTNDATAQYW2' # Always use this HostedZoneId for CloudFront
+
+Outputs:
+  CloudFrontDistributionID:
+    Description: 'CloudFront Distribution ID'
+    Value: !Ref CloudFrontDistribution

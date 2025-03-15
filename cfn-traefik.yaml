@@ -1,0 +1,178 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Deploys an EC2 instance running Traefik with a public and private Route 53 record."
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: "The VPC to use for the EC2 instance."
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: "Subnet where the EC2 instance will be launched."
+
+  HostedZoneId:
+    Type: String
+    Description: "The Route 53 Hosted Zone ID for the public domain (tfk.billbaran.us)."
+
+  PrivateHostedZoneId:
+    Type: String
+    Description: "The Route 53 Private Hosted Zone ID for the admin domain (tfkadmin.billbaran.us)."
+
+  InstanceType:
+    Type: String
+    Description: "Instance type for the EC2 instance."
+
+  AdminAllowedIP:
+    Type: String
+    Description: "IP allowed to access the Traefik admin interface."
+
+  ImageAmi:
+    Type: String
+    Description: Host image AMI
+
+Resources:
+  # Security Group for EC2
+  TraefikSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow HTTP and admin access to Traefik"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: !Ref AdminAllowedIP
+      Tags:
+        - Key: Name
+          Value: "Traefik-SG"
+
+  # IAM Role for EC2 (allows SSM access)
+  TraefikInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AllowSSM
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ssm:GetParameter"
+                  - "ssm:PutParameter"
+                  - "ssm:DescribeParameters"
+                  - "ssm:GetParameterHistory"
+                Resource: "*"
+
+  TraefikInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref TraefikInstanceRole
+
+  # EC2 Instance for Traefik
+  TraefikEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref TraefikSecurityGroup
+      IamInstanceProfile: !Ref TraefikInstanceProfile
+      ImageId: !Ref ImageAMI
+      Tags:
+        - Key: Name
+          Value: "Traefik-EC2"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          # yum install -y docker
+          systemctl enable docker --now
+          curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+          
+          # Setup Traefik
+          mkdir -p /opt/traefik
+          cat <<EOF > /opt/traefik/docker-compose.yml
+          version: '3'
+          services:
+            traefik:
+              image: traefik:v2.9
+              restart: always
+              ports:
+                - "80:80"
+                - "8080:8080"
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock
+                - /opt/traefik/traefik.yml:/etc/traefik/traefik.yml
+              networks:
+                - traefik-net
+          networks:
+            traefik-net:
+              driver: bridge
+          EOF
+
+          # Create Traefik configuration file
+          cat <<EOF > /opt/traefik/traefik.yml
+          global:
+            checkNewVersion: false
+            sendAnonymousUsage: false
+          entryPoints:
+            web:
+              address: ":80"
+            admin:
+              address: ":8080"
+
+          providers:
+            docker:
+              exposedByDefault: false
+
+          api:
+            dashboard: true
+            insecure: true
+
+          http:
+            routers:
+              api:
+                rule: "Host(\`tfkadmin.billbaran.us\`)"
+                entryPoints: admin
+                service: api@internal
+          EOF
+
+          # Start Traefik
+          cd /opt/traefik
+          docker-compose up -d
+
+  # Route 53 Record for Public Domain (tfk.billbaran.us)
+  Route53PublicTraefik:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: tfk.billbaran.us
+      Type: A
+      TTL: "300"
+      ResourceRecords:
+        - !GetAtt TraefikEC2Instance.PublicIp
+
+  # Route 53 Record for Private Admin Domain (tfkadmin.billbaran.us)
+  Route53PrivateAdminTraefik:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref PrivateHostedZoneId
+      Name: tfkadmin.billbaran.us
+      Type: A
+      TTL: "300"
+      ResourceRecords:
+        - !GetAtt TraefikEC2Instance.PrivateIp

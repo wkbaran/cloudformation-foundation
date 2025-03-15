@@ -1,0 +1,58 @@
+services:
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    container_name: ntfy
+    command: serve
+    restart: unless-stopped
+    volumes:
+      - /home/ec2-user/ntfy/ntfy-data:/var/lib/ntfy
+      - /home/ec2-user/ntfy/ntfy-cache:/var/cache/ntfy
+      - /home/ec2-user/ntfy/init-script.sh:/docker-entrypoint-init.d/init-script.sh
+    environment:
+      - TZ=America/Denver  # Set your timezone here
+      # Use CloudFront URL as base URL if you have a custom CloudFront domain
+      - NTFY_BASE_URL=https://ntfy.${DOMAIN}
+      - NTFY_WEB_ROOT=disable
+      - NTFY_ENABLE_LOGIN=true
+      - NTFY_BEHIND_PROXY=true
+      - NTFY_KEEPALIVE_INTERVAL=55s  # CloudFront timeout is 60s
+      # Add authentication if needed
+      - NTFY_AUTH_FILE=/var/lib/ntfy/auth.db
+      - NTFY_AUTH_DEFAULT_ACCESS=deny
+      # Vars used by init-script.sh
+      - ADMINUSER=${ADMINUSER}
+      - ADMINPASS=${ADMINPASS}
+    expose:
+      - "80"
+    networks:
+      - main
+    labels:
+      - "traefik.enable=true"
+      # HTTP Router
+      - "traefik.http.routers.ntfy-http.rule=Host(`ntfy.${DOMAIN}`)"
+      - "traefik.http.routers.ntfy-http.entrypoints=web"
+      - "traefik.http.middlewares.ntfy-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.ntfy-http.middlewares=ntfy-redirect"
+      
+      # HTTPS Router (This is what was missing)
+      - "traefik.http.routers.ntfy.rule=Host(`ntfy.${DOMAIN}`)"
+      - "traefik.http.routers.ntfy.entrypoints=websecure"
+      - "traefik.http.routers.ntfy.tls=true"
+      - "traefik.http.routers.ntfy.tls.certresolver=myresolver"
+      
+      # Service configuration
+      - "traefik.http.services.ntfy.loadbalancer.server.port=80"
+      
+      # Headers for proper proxy behavior
+      - "traefik.http.middlewares.ntfy-headers.headers.customRequestHeaders.X-Forwarded-Proto=https"
+      - "traefik.http.middlewares.ntfy-headers.headers.customRequestHeaders.X-Forwarded-Host=ntfy.${DOMAIN}"
+      - "traefik.http.routers.ntfy.middlewares=ntfy-headers"
+      
+      # WebSocket support (ntfy likely needs this)
+      - "traefik.http.middlewares.ntfy-websocket.headers.customRequestHeaders.Connection=Upgrade"
+      - "traefik.http.middlewares.ntfy-websocket.headers.customRequestHeaders.Upgrade=websocket"
+      - "traefik.http.routers.ntfy.middlewares=ntfy-headers,ntfy-websocket"
+      
+networks:
+  main:
+    external: true  # Assumes you already have a Traefik network set up

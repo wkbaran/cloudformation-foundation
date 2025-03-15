@@ -1,0 +1,30 @@
+[
+  {
+    "ParameterKey": "VpcId",
+    "ParameterValue": "vpc-0c8941782daef2faf"
+  },
+  {
+    "ParameterKey": "SubnetId",
+    "ParameterValue": "subnet-0440f7615224182eb"
+  },
+  {
+    "ParameterKey": "HostedZoneId",
+    "ParameterValue": "Z0927352H55TBS393ZU1"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "t3.small"
+  },
+  {
+    "ParameterKey": "AdminAllowedIP",
+    "ParameterValue": "24.117.28.212/32"
+  },
+  {
+    "ParameterKey": "ImageAmi",
+    "ParameterValue": "ami-00c09238b78bfcbd5"
+  },
+  {
+    "ParameterKey": "KeyName",
+    "ParameterValue": "minecraftkey"
+  }
+]

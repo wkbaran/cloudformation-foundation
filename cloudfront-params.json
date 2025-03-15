@@ -1,0 +1,30 @@
+[
+  {
+    "ParameterKey": "VpcId",
+    "ParameterValue": "vpc-0c8941782daef2faf"
+  },
+  {
+    "ParameterKey": "EC2InstanceId",
+    "ParameterValue": "i-0c9c84bb6c5c8b013"
+  },
+  {
+    "ParameterKey": "EC2PrivateDNS",
+    "ParameterValue": "ec2-35-93-70-167.us-west-2.compute.amazonaws.com"
+  },
+  {
+    "ParameterKey": "EC2SubnetId",
+    "ParameterValue": "subnet-0440f7615224182eb"
+  },
+  {
+    "ParameterKey": "PrimaryDomainName",
+    "ParameterValue": "ntfy.billbaran.us"
+  },
+  {
+    "ParameterKey": "AdditionalDomainNames",
+    "ParameterValue": "zrok.billbaran.us"
+  },
+  {
+    "ParameterKey": "CertificateARN",
+    "ParameterValue": "arn:aws:acm:us-east-1:925032123076:certificate/d13b2d6c-6e4e-4036-a0da-b8993fe53927"
+  }
+]

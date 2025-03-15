@@ -1,0 +1,10 @@
+[
+  {
+    "ParameterKey": "SSLCertificateArn",
+    "ParameterValue": "arn:aws:acm:us-west-2:925032123076:certificate/51259292-5867-4d02-8965-0a83e6a3e522"
+  },
+  {
+    "ParameterKey": "VpcCidr",
+    "ParameterValue": "10.0.0.0/16"
+  }
+]

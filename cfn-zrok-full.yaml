@@ -1,0 +1,444 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for zrok services with VPC, public/private subnets, NAT Gateway, and debugging mode'
+
+Parameters:
+  CertificateArn:
+    Type: String
+    Description: ARN of the existing ACM certificate for the domain
+
+  PublicHostedZoneId:
+    Type: String
+    Description: ID of the public Route53 hosted zone for the domain
+
+  DomainName:
+    Type: String
+    Description: Public domain name for zrok service (e.g., zrok.yourdomain.com)
+    
+  ControllerSubdomain:
+    Type: String
+    Default: controller
+    Description: Subdomain for the Ziti Controller (e.g., controller.yourdomain.com)
+    
+  RouterSubdomain:
+    Type: String
+    Default: router
+    Description: Subdomain for the Ziti Router (e.g., router.yourdomain.com)
+
+  ZitiVersion:
+    Type: String
+    Description: Ziti Version
+
+  AdminCIDR:
+    Type: String
+    Description: CIDR range for administrative and client access (e.g., your IP address as x.x.x.x/32)
+    AllowedPattern: ^(?:[0-9]{1,3}\.){3}[0-9]{1,3}/(?:[0-9]|[1-2][0-9]|3[0-2])$
+    ConstraintDescription: Must be a valid IP CIDR range of the form x.x.x.x/x
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair for SSH access
+    ConstraintDescription: Must be the name of an existing EC2 KeyPair
+
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    Description: EC2 instance type for the server
+    AllowedValues:
+      - t3.small
+      - t3.medium
+      - t3.large
+      - m5.large
+
+  InstanceAMI:
+    Type: String
+    Description: AMI for the instance
+
+Resources:
+  # VPC and Network Configuration
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-VPC
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-IGW
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PublicSubnet
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateSubnet
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PublicRT
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-PrivateRT
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ElasticIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-NAT
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Security Groups
+  ZrokServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for zrok server
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        # SSH access for debugging
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AdminCIDR
+        # HTTPS for zrok services
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        # HTTP for redirects
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        # Ziti Edge Controller
+        - IpProtocol: tcp
+          FromPort: 1280
+          ToPort: 1280
+          CidrIp: !Ref AdminCIDR
+        # Ziti Router
+        - IpProtocol: tcp
+          FromPort: 3022
+          ToPort: 3022
+          CidrIp: 0.0.0.0/0
+
+  # EC2 Instance Role
+  ZrokServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ZrokServerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                Resource: 
+                  - !Sub arn:aws:route53:::hostedzone/${PublicHostedZoneId}
+
+  ZrokServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ZrokServerRole
+
+  # EC2 Instance
+  ZrokServer:
+    Type: AWS::EC2::Instance
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref InstanceAMI
+      KeyName: !Ref KeyName
+      IamInstanceProfile: !Ref ZrokServerInstanceProfile
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          GroupSet:
+            - !Ref ZrokServerSecurityGroup
+          SubnetId: !Ref PublicSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: 30
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          
+          # Update and install dependencies
+          yum update -y
+          yum install -y jq git amazon-cloudwatch-agent
+          # Docker is already installed on ECS-optimized AMI
+          
+          # Start Docker service
+          systemctl enable docker
+          systemctl start docker
+          
+          # Setup logging
+          mkdir -p /var/log/zrok /etc/zrok
+          
+          # Install AWS CLI
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          ./aws/install
+          
+          # Create private DNS entries
+          INSTANCE_IP=$(curl http://169.254.169.254/latest/meta-data/local-ipv4)
+          PUBLIC_IP=$(curl http://169.254.169.254/latest/meta-data/public-ipv4)
+          
+          # Register with Public DNS
+          cat > /tmp/public-dns-change.json <<EOF
+          {
+            "Changes": [
+              {
+                "Action": "UPSERT",
+                "ResourceRecordSet": {
+                  "Name": "${DomainName}",
+                  "Type": "A",
+                  "TTL": 300,
+                  "ResourceRecords": [
+                    {
+                      "Value": "$PUBLIC_IP"
+                    }
+                  ]
+                }
+              },
+              {
+                "Action": "UPSERT",
+                "ResourceRecordSet": {
+                  "Name": "${ControllerSubdomain}.${DomainName}",
+                  "Type": "A",
+                  "TTL": 300,
+                  "ResourceRecords": [
+                    {
+                      "Value": "$PUBLIC_IP"
+                    }
+                  ]
+                }
+              },
+              {
+                "Action": "UPSERT",
+                "ResourceRecordSet": {
+                  "Name": "${RouterSubdomain}.${DomainName}",
+                  "Type": "A",
+                  "TTL": 300,
+                  "ResourceRecords": [
+                    {
+                      "Value": "$PUBLIC_IP"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+          EOF
+          
+          aws route53 change-resource-record-sets --hosted-zone-id ${PublicHostedZoneId} --change-batch file:///tmp/public-dns-change.json
+          
+          # Install Ziti Edge Controller
+          mkdir -p /opt/ziti/controller
+          cd /opt/ziti/controller
+          curl -L https://github.com/openziti/ziti/releases/download/v${ZitiVersion}/ziti-controller-${ZitiVersion}-linux-amd64.tar.gz | tar xz
+          
+          # Create Ziti Controller config
+          cat > /opt/ziti/controller/ziti-controller.yaml <<EOF
+          v: 3
+          
+          identity:
+            cert: /opt/ziti/controller/certs/server.cert
+            server_cert: /opt/ziti/controller/certs/server.cert
+            key: /opt/ziti/controller/certs/server.key
+            ca: /opt/ziti/controller/certs/ca.cert
+          
+          ctrl:
+            listener: tls:0.0.0.0:1280
+          
+          edge:
+            api:
+              address: 0.0.0.0:1280
+          
+          db:
+            file: /opt/ziti/controller/db/ctrl.db
+            
+          # Debug mode enabled  
+          trace:
+            path: /var/log/zrok
+          EOF
+          
+          # Create certificates directory
+          mkdir -p /opt/ziti/controller/certs /opt/ziti/controller/db
+          
+          # Install zrok
+          curl -L https://github.com/openziti/zrok/releases/latest/download/zrok_Linux_x86_64.tar.gz | tar xz -C /usr/local/bin
+          
+          # Create a systemd service file for ziti-controller
+          cat > /etc/systemd/system/ziti-controller.service <<EOF
+          [Unit]
+          Description=Ziti Controller
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=/opt/ziti/controller
+          ExecStart=/opt/ziti/controller/ziti-controller run /opt/ziti/controller/ziti-controller.yaml
+          Restart=always
+          RestartSec=5
+          StandardOutput=journal
+          StandardError=journal
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+          # Create a debug info file
+          cat > /home/ec2-user/debug-info.txt <<EOF
+          ==== zrok Debug Information ====
+          
+          Instance IP: $INSTANCE_IP
+          Public IP: $PUBLIC_IP
+          
+          Controller Domain: ${ControllerSubdomain}.${DomainName}
+          Router Domain: ${RouterSubdomain}.${DomainName}
+          Public Domain: ${DomainName}
+          
+          Debug logs: /var/log/zrok
+          
+          Steps to initialize zrok:
+          1. SSH into this server using: ssh -i your-key.pem ec2-user@$PUBLIC_IP
+          2. Initialize the Ziti Controller: cd /opt/ziti/controller && ./ziti-controller create-config -d .
+          3. Start the controller: systemctl start ziti-controller
+          4. Check logs: journalctl -u ziti-controller -f
+          
+          NOTE: This is a debug setup. Remember to secure your environment before production use.
+          EOF
+          
+          # Set permissions
+          chown -R ec2-user:ec2-user /home/ec2-user/debug-info.txt
+          chmod 755 /usr/local/bin/zrok
+          
+          # Setup complete
+          echo "zrok installation completed in debug mode" > /var/log/zrok/setup.log
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-ZrokServer
+
+Outputs:
+  VPC:
+    Description: The ID of the VPC
+    Value: !Ref VPC
+    Export:
+      Name: !Sub ${AWS::StackName}-VPC
+
+  PublicSubnet:
+    Description: The ID of the public subnet
+    Value: !Ref PublicSubnet
+    Export:
+      Name: !Sub ${AWS::StackName}-PublicSubnet
+
+  PrivateSubnet:
+    Description: The ID of the private subnet
+    Value: !Ref PrivateSubnet
+    Export:
+      Name: !Sub ${AWS::StackName}-PrivateSubnet
+
+  ZrokServerPublicIP:
+    Description: The public IP address of the zrok server
+    Value: !GetAtt ZrokServer.PublicIp
+
+  ZrokServerPrivateIP:
+    Description: The private IP address of the zrok server
+    Value: !GetAtt ZrokServer.PrivateIp
+
+  SSHAccess:
+    Description: SSH command to access the zrok server
+    Value: !Sub ssh -i your-key.pem ec2-user@${ZrokServer.PublicIp}
+
+  ZrokDebugInfo:
+    Description: Path to debug information file on the server
+    Value: /home/ec2-user/debug-info.txt
+
+  ZrokControllerEndpoint:
+    Description: Ziti Controller endpoint
+    Value: !Sub https://${ControllerSubdomain}.${DomainName}:1280

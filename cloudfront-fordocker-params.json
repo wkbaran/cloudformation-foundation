@@ -1,0 +1,18 @@
+[
+  {
+    "ParameterKey": "DomainName",
+    "ParameterValue": "web.billbaran.us"
+  },
+  {
+    "ParameterKey": "CertificateArn",
+    "ParameterValue": "arn:aws:acm:us-east-1:925032123076:certificate/d13b2d6c-6e4e-4036-a0da-b8993fe53927"
+  },
+  {
+    "ParameterKey": "HostedZoneId",
+    "ParameterValue": "Z0927352H55TBS393ZU1"
+  },
+  {
+    "ParameterKey": "DockerHost",
+    "ParameterValue": "jobs.billbaran.us"
+  }
+]
