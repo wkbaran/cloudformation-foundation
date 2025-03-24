@@ -1,0 +1,16 @@
+[common]
+server_addr = "frp.${DOMAIN}"
+server_port = 7000
+log_level = "debug"
+log_file = "frpc.log"
+transport.tls.enable = true
+transport.tls.certFile = "/home/bill/.frp/certs/client.crt"
+transport.tls.keyFile = "/home/bill/.frp/certs/client.key"
+transport.tls.trustedCaFile = "/home/bill/.frp/certs/ca.crt"
+token = "${TOKEN}"
+
+[test]
+type = "tcp"
+local_ip = "127.0.0.1"
+local_port = 5000
+remote_port = 5000

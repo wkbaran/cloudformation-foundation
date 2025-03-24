@@ -1,0 +1,8 @@
+[common]
+bindPort = 7000
+#log_level = "debug"
+transport.tls.force = true
+transport.tls.certFile = "/certs/server.crt"
+transport.tls.keyFile = "/certs/server.key"
+transport.tls.trustedCaFile = "/certs/ca.crt"
+token = "${TOKEN}"

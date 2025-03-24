@@ -1,0 +1,44 @@
+services:
+  frps:
+    image: snowdreamtech/frps:0.61.2
+    container_name: frps
+    restart: always
+    volumes:
+      - /home/ec2-user/frp/frps.toml:/etc/frp/frps.toml
+      - /home/ec2-user/frp/certs:/certs:ro
+      - /home/ec2-user/frp/generate_certs.sh:/generate_certs.sh
+    expose:
+      - "7000"  # Control port
+      # - "7500"  # Dashboard
+      - "80"  # HTTP vhost
+      - "443"  # HTTPS vhost
+    ports:
+      - "7000:7000"     # Control port (TCP)
+      - "7000:7000/udp" # Control port (UDP/KCP)
+      - "5000-5100:5000-5100"  # Range for TCP tunnels
+    networks:
+      - main
+    labels:
+      # Main FRP service access
+      - "traefik.enable=true"
+      - "traefik.http.routers.frp-admin.rule=Host(`frp.${DOMAIN}`)"
+      - "traefik.http.routers.frp-admin.entrypoints=websecure"
+      - "traefik.http.routers.frp-admin.tls=true"
+      - "traefik.http.routers.frp-admin.tls.certresolver=myresolver"
+      - "traefik.http.services.frp-admin.loadbalancer.server.port=7500"
+      
+      # HTTP wildcard routing for subdomains
+      - "traefik.http.routers.frp-wildcard.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.frp.${DOMAIN}`)"
+      - "traefik.http.routers.frp-wildcard.entrypoints=websecure"
+      - "traefik.http.routers.frp-wildcard.tls=true"
+      - "traefik.http.routers.frp-wildcard.tls.certresolver=myresolver"
+      - "traefik.http.services.frp-wildcard.loadbalancer.server.port=8080"
+      
+      # Handling HTTP to HTTPS redirect
+      - "traefik.http.routers.frp-http.rule=Host(`frp.${DOMAIN}`) || HostRegexp(`{subdomain:[a-z0-9-]+}.frp.${DOMAIN}`)"
+      - "traefik.http.routers.frp-http.entrypoints=web"
+      - "traefik.http.routers.frp-http.middlewares=redirect-to-https"
+
+networks:
+  main:
+    external: true
