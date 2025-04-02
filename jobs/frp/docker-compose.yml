@@ -31,7 +31,7 @@ services:
       - "traefik.http.routers.main.entrypoints=websecure"
       - "traefik.http.routers.main.tls=true"
       - "traefik.http.routers.main.tls.certresolver=myresolver"
-      - "traefik.http.services.main.loadbalancer.server.port=5000"
+      - "traefik.http.services.main.loadbalancer.server.port=8080"
       
       # Handling HTTP to HTTPS redirect
       - "traefik.http.routers.frp-http.rule=Host(`frp.${DOMAIN}`) || HostRegexp(`{subdomain:[a-z0-9-]+}.frp.${DOMAIN}`)"
