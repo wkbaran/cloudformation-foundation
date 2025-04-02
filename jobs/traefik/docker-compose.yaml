@@ -6,13 +6,13 @@ services:
     networks: 
      - main
     command:
-      - "--api.dashboard=true"
+      - "--api.dashboard=false"
       - "--providers.docker=true"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
       - "--providers.docker.exposedbydefault=false"
       - "--providers.docker.network=main"
-      - "--log.level=DEBUG"
+      - "--log.level=TRACE"
       # LetsEncrypt Configuration for wildcard certificate
       - "--certificatesresolvers.myresolver.acme.email=${EMAIL}"
       - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"

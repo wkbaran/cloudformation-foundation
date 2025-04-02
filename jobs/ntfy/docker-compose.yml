@@ -31,8 +31,8 @@ services:
       # HTTP Router
       - "traefik.http.routers.ntfy-http.rule=Host(`ntfy.${DOMAIN}`)"
       - "traefik.http.routers.ntfy-http.entrypoints=web"
-      - "traefik.http.middlewares.ntfy-redirect.redirectscheme.scheme=https"
       - "traefik.http.routers.ntfy-http.middlewares=ntfy-redirect"
+      - "traefik.http.middlewares.ntfy-redirect.redirectscheme.scheme=https"
       
       # HTTPS Router (This is what was missing)
       - "traefik.http.routers.ntfy.rule=Host(`ntfy.${DOMAIN}`)"
