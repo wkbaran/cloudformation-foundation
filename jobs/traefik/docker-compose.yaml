@@ -68,14 +68,13 @@ services:
       - "traefik.http.routers.frp-webhook.entrypoints=websecure"
       - "traefik.http.routers.frp-webhook.tls=true"
       - "traefik.http.routers.frp-webhook.tls.certresolver=myresolver"
-      - "traefik.http.routers.frp-webhook.service=frp-service"
       
       # Router for blocking all other paths on the frp subdomain
       - "traefik.http.routers.frp-block.rule=Host(`frp.${DOMAIN}`)"
       - "traefik.http.routers.frp-block.entrypoints=websecure"
       - "traefik.http.routers.frp-block.tls=true"
       - "traefik.http.routers.frp-block.tls.certresolver=myresolver"
-      - "traefik.http.routers.frp-block.middlewares=block-non-webhook@docker"
+      - "traefik.http.routers.frp-block.middlewares=block-non-webhook"
       - "traefik.http.routers.frp-block.service=noop@internal"
 
 networks:
