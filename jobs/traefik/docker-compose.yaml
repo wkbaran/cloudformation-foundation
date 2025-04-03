@@ -5,6 +5,9 @@ services:
     container_name: traefik
     networks: 
      - main
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "/home/ec2-user/traefik/letsencrypt:/letsencrypt"
     command:
       - "--api.dashboard=false"
       - "--providers.docker=true"
