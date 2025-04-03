@@ -55,11 +55,17 @@ services:
       - "traefik.http.routers.cert-wildcard.service=noop@internal"
       - "traefik.http.routers.cert-wildcard.entrypoints=websecure"
     
-      # Create middlewares for the frp subdomain
-      - "traefik.http.middlewares.webhook-path-check.stripprefix.prefixes=/webhook"
-      - "traefik.http.middlewares.only-webhook-paths.chain.middlewares=check-webhook-path,webhook-path-check"
-      - "traefik.http.middlewares.check-webhook-path.containsregexp.strategy=or"
-      - "traefik.http.middlewares.check-webhook-path.containsregexp.regexp=^/webhook.*"
+      # Create a middleware to check if path begins with /webhook
+      - "traefik.http.middlewares.webhook-checker.replacepathregex.regex=^/webhook(.*)"
+      - "traefik.http.middlewares.webhook-checker.replacepathregex.replacement=/webhook$$1"
+
+      # Create a middleware to block requests that don't start with /webhook
+      - "traefik.http.middlewares.non-webhook-blocker.chain.middlewares=webhook-path-check,block-if-not-webhook"
+      - "traefik.http.middlewares.webhook-path-check.plugin.pathregexprule.rule=^/webhook.*"
+      - "traefik.http.middlewares.webhook-path-check.plugin.pathregexprule.invert=true"
+      - "traefik.http.middlewares.block-if-not-webhook.errors.status=403"
+      - "traefik.http.middlewares.block-if-not-webhook.errors.service=noop@internal"
+      - "traefik.http.middlewares.block-if-not-webhook.errors.query=Access Denied"
       
       # Apply middleware only to the frp subdomain router
       - "traefik.http.routers.frp.rule=Host(`frp.${DOMAIN}`)"
@@ -67,20 +73,29 @@ services:
       - "traefik.http.routers.frp.tls=true"
       - "traefik.http.routers.frp.tls.certresolver=myresolver"
       - "traefik.http.routers.frp.service=frp"
-      - "traefik.http.routers.frp.middlewares=check-webhook-path@docker"
+      - "traefik.http.routers.frp.middlewares=non-webhook-blocker@docker"
       - "traefik.http.services.frp.loadbalancer.server.port=8080"
       
-      # Error handling - block requests to frp that don't match /webhook
-      - "traefik.http.middlewares.block-non-webhook.errors.status=403"
-      - "traefik.http.middlewares.block-non-webhook.errors.service=noop@internal"
-      - "traefik.http.routers.frp-catch-all.rule=Host(`frp.${DOMAIN}`)"
-      - "traefik.http.routers.frp-catch-all.entrypoints=websecure"
-      - "traefik.http.routers.frp-catch-all.tls=true"
-      - "traefik.http.routers.frp-catch-all.tls.certresolver=myresolver"
-      - "traefik.http.routers.frp-catch-all.middlewares=block-non-webhook@docker"
-      - "traefik.http.routers.frp-catch-all.service=noop@internal"
-      - "traefik.http.routers.frp-catch-all.priority=1"
-      - "traefik.http.routers.frp.priority=2"
+      # Alternative approach if the above doesn't work - the following definition uses HTTP Path prefix matching
+      # Explicitly handle webhook paths
+      - "traefik.http.routers.frp-webhook.rule=Host(`frp.${DOMAIN}`) && PathPrefix(`/webhook`)"
+      - "traefik.http.routers.frp-webhook.entrypoints=websecure"
+      - "traefik.http.routers.frp-webhook.tls=true"
+      - "traefik.http.routers.frp-webhook.tls.certresolver=myresolver"
+      - "traefik.http.routers.frp-webhook.service=frp"
+      - "traefik.http.routers.frp-webhook.priority=100"
+      
+      # Explicitly block all other paths
+      - "traefik.http.routers.frp-block-all.rule=Host(`frp.${DOMAIN}`)"
+      - "traefik.http.routers.frp-block-all.entrypoints=websecure"
+      - "traefik.http.routers.frp-block-all.tls=true"
+      - "traefik.http.routers.frp-block-all.tls.certresolver=myresolver"
+      - "traefik.http.middlewares.block-all.errors.status=403"
+      - "traefik.http.middlewares.block-all.errors.service=noop@internal"
+      - "traefik.http.middlewares.block-all.errors.query=Access Denied"
+      - "traefik.http.routers.frp-block-all.middlewares=block-all@docker"
+      - "traefik.http.routers.frp-block-all.service=noop@internal"
+      - "traefik.http.routers.frp-block-all.priority=10"
 
 networks:
   main:
