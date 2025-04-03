@@ -2,5 +2,4 @@
 
 Dynamically set up tunnels to home servers.
 Or use a lightweight docker container for more permanent tunnels. 
-Use as VPN tunnel?
 
