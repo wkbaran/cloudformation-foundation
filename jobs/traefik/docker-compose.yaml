@@ -27,9 +27,6 @@ services:
       - "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
       - "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
       - "AWS_REGION=${AWS_REGION}"
-    volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock:ro"
-      - "/home/ec2-user/traefik/letsencrypt:/letsencrypt"
     labels:
       - "traefik.enable=true"
       # Dashboard configuration with wildcard cert
@@ -54,15 +51,16 @@ services:
       - "traefik.http.routers.cert-wildcard.tls.domains[0].sans=*.${DOMAIN}"
       - "traefik.http.routers.cert-wildcard.service=noop@internal"
       - "traefik.http.routers.cert-wildcard.entrypoints=websecure"
-
-      # Create a middleware to block non-webhook paths
-      - "traefik.http.middlewares.block-non-webhook.redirectregex.regex=^(?!/webhook).*$$"
-      - "traefik.http.middlewares.block-non-webhook.redirectregex.permanent=true"
-      - "traefik.http.middlewares.block-non-webhook.redirectregex.destination=/access-denied"
+    
+      # Create path-specific middlewares
+      - "traefik.http.middlewares.webhook-only.addprefix.prefix=/webhook"
+      - "traefik.http.middlewares.block-non-webhook.errors.status=403"
+      - "traefik.http.middlewares.block-non-webhook.errors.service=noop@internal"
+      - "traefik.http.middlewares.path-filter.containsregexp.regexp=^/webhook.*"
       
       # Apply middleware only to the frp subdomain router
       - "traefik.http.routers.main.rule=Host(`frp.${DOMAIN}`)"
-      - "traefik.http.routers.main.middlewares=block-non-webhook@docker"
+      - "traefik.http.routers.main.middlewares=path-filter@docker"
       - "traefik.http.routers.main.entrypoints=websecure"
       - "traefik.http.routers.main.tls=true"
       - "traefik.http.routers.main.tls.certresolver=myresolver"
