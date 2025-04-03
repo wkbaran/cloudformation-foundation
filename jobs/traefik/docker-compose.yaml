@@ -55,6 +55,19 @@ services:
       - "traefik.http.routers.cert-wildcard.service=noop@internal"
       - "traefik.http.routers.cert-wildcard.entrypoints=websecure"
 
+      # Create a middleware to block non-webhook paths
+      - "traefik.http.middlewares.block-non-webhook.redirectregex.regex=^(?!/webhook).*$$"
+      - "traefik.http.middlewares.block-non-webhook.redirectregex.permanent=true"
+      - "traefik.http.middlewares.block-non-webhook.redirectregex.destination=/access-denied"
+      
+      # Apply middleware only to the frp subdomain router
+      - "traefik.http.routers.main.rule=Host(`frp.${DOMAIN}`)"
+      - "traefik.http.routers.main.middlewares=block-non-webhook@docker"
+      - "traefik.http.routers.main.entrypoints=websecure"
+      - "traefik.http.routers.main.tls=true"
+      - "traefik.http.routers.main.tls.certresolver=myresolver"
+      - "traefik.http.services.main.loadbalancer.server.port=8080"
+
 networks:
   main:
     external: true
