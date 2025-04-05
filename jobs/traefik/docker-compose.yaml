@@ -8,20 +8,7 @@ services:
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
       - "/home/ec2-user/traefik/letsencrypt:/letsencrypt"
-    command:
-      - "--api.dashboard=false"
-      - "--providers.docker=true"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-      - "--providers.docker.exposedbydefault=false"
-      - "--providers.docker.network=main"
-      - "--log.level=TRACE"
-      # LetsEncrypt Configuration for wildcard certificate
-      - "--certificatesresolvers.myresolver.acme.email=${EMAIL}"
-      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
-      - "--certificatesresolvers.myresolver.acme.dnschallenge=true"
-      - "--certificatesresolvers.myresolver.acme.dnschallenge.provider=route53"
-      - "--global.sendAnonymousUsage"
+      - "/home/ec2-user/traefik/traefik.toml:/etc/traefik/traefik.toml:ro"
     ports:
       - "80:80"
       - "443:443"
@@ -55,6 +42,10 @@ services:
       - "traefik.http.routers.cert-wildcard.service=noop@internal"
       - "traefik.http.routers.cert-wildcard.entrypoints=websecure"
       
+      - "EMAIL=${EMAIL}"
+      - "DOMAIN=${DOMAIN}"
+      - "ADMIN_CIDR=${ADMIN_CIDR}"
+
 networks:
   main:
     external: true

@@ -8,18 +8,17 @@ services:
       - /home/ec2-user/frp/certs:/certs:ro
       - /home/ec2-user/frp/generate_certs.sh:/generate_certs.sh
     expose:
-      - "7000"  # Control port
+      - "7000"    # Control port
       # - "7500"  # Dashboard
-      #- "80"  # HTTP vhost
-      #- "443"  # HTTPS vhost
+      #- "80"     # HTTP vhost
+      #- "443"    # HTTPS vhost
     ports:
-      - "7000:7000"     # Control port (TCP)
-      - "7000:7000/udp" # Control port (UDP/KCP)
+      - "7000:7000"            # Control port (TCP)
+      - "7000:7000/udp"        # Control port (UDP/KCP)
       - "5000-5100:5000-5100"  # Range for TCP tunnels
     networks:
       - main
     labels:
-      # Main FRP service access
       - "traefik.enable=true"
 #      - "traefik.http.routers.frp-admin.rule=Host(`frp.${DOMAIN}`)"
 #      - "traefik.http.routers.frp-admin.entrypoints=websecure"
