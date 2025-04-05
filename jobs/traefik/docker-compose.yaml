@@ -55,28 +55,6 @@ services:
       - "traefik.http.routers.cert-wildcard.service=noop@internal"
       - "traefik.http.routers.cert-wildcard.entrypoints=websecure"
       
-      # Create a blocking middleware for non-webhook paths (403 error)
-      - "traefik.http.middlewares.block-non-webhook.errors.status=403" 
-      - "traefik.http.middlewares.block-non-webhook.errors.service=noop@internal"
-      - "traefik.http.middlewares.block-non-webhook.errors.query=Access Denied: Path Not Allowed"
-      
-      # Create the webhook backend service
-      - "traefik.http.services.frp-service.loadbalancer.server.port=8080"
-      
-      # Router for webhook paths only
-      - "traefik.http.routers.frp-webhook.rule=Host(`frp.${DOMAIN}`) && PathPrefix(`/webhook`)"
-      - "traefik.http.routers.frp-webhook.entrypoints=websecure"
-      - "traefik.http.routers.frp-webhook.tls=true"
-      - "traefik.http.routers.frp-webhook.tls.certresolver=myresolver"
-      
-      # Router for blocking all other paths on the frp subdomain
-      - "traefik.http.routers.frp-block.rule=Host(`frp.${DOMAIN}`)"
-      - "traefik.http.routers.frp-block.entrypoints=websecure"
-      - "traefik.http.routers.frp-block.tls=true"
-      - "traefik.http.routers.frp-block.tls.certresolver=myresolver"
-      - "traefik.http.routers.frp-block.middlewares=block-non-webhook"
-      - "traefik.http.routers.frp-block.service=noop@internal"
-
 networks:
   main:
     external: true
