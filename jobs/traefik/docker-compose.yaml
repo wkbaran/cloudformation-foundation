@@ -8,20 +8,7 @@ services:
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
       - "/home/ec2-user/traefik/letsencrypt:/letsencrypt"
-    command:
-      - "--api.dashboard=false"
-      - "--providers.docker=true"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-      - "--providers.docker.exposedbydefault=false"
-      - "--providers.docker.network=main"
-      - "--log.level=TRACE"
-      # LetsEncrypt Configuration for wildcard certificate
-      - "--certificatesresolvers.myresolver.acme.email=${EMAIL}"
-      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
-      - "--certificatesresolvers.myresolver.acme.dnschallenge=true"
-      - "--certificatesresolvers.myresolver.acme.dnschallenge.provider=route53"
-      - "--global.sendAnonymousUsage"
+      - "/home/ec2-user/traefik/traefik.toml:/etc/traefik/traefik.toml:ro"
     ports:
       - "80:80"
       - "443:443"
@@ -30,52 +17,9 @@ services:
       - "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
       - "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
       - "AWS_REGION=${AWS_REGION}"
-    labels:
-      - "traefik.enable=true"
-      # Dashboard configuration with wildcard cert
-      - "traefik.http.routers.dashboard.rule=Host(`jobs.${DOMAIN}`)"
-      - "traefik.http.routers.dashboard.entrypoints=websecure"
-      - "traefik.http.routers.dashboard.tls=true"
-      - "traefik.http.routers.dashboard.tls.certresolver=myresolver"
-      - "traefik.http.routers.dashboard.service=api@internal"
-      - "traefik.http.middlewares.dashboard-ipwhitelist.ipwhitelist.sourcerange=${ADMIN_CIDR}"
-      - "traefik.http.routers.dashboard.middlewares=dashboard-ipwhitelist"
-      
-      # HTTP to HTTPS redirect
-      - "traefik.http.routers.dashboard-http.rule=Host(`jobs.${DOMAIN}`)"
-      - "traefik.http.routers.dashboard-http.entrypoints=web"
-      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
-      - "traefik.http.routers.dashboard-http.middlewares=redirect-to-https"
-      
-      # Generate wildcard certificate
-      - "traefik.http.routers.cert-wildcard.rule=Host(`wildcard-cert.${DOMAIN}`)" 
-      - "traefik.http.routers.cert-wildcard.tls.certresolver=myresolver"
-      - "traefik.http.routers.cert-wildcard.tls.domains[0].main=${DOMAIN}"
-      - "traefik.http.routers.cert-wildcard.tls.domains[0].sans=*.${DOMAIN}"
-      - "traefik.http.routers.cert-wildcard.service=noop@internal"
-      - "traefik.http.routers.cert-wildcard.entrypoints=websecure"
-      
-      # Create a blocking middleware for non-webhook paths (403 error)
-      - "traefik.http.middlewares.block-non-webhook.errors.status=403" 
-      - "traefik.http.middlewares.block-non-webhook.errors.service=noop@internal"
-      - "traefik.http.middlewares.block-non-webhook.errors.query=Access Denied: Path Not Allowed"
-      
-      # Create the webhook backend service
-      - "traefik.http.services.frp-service.loadbalancer.server.port=8080"
-      
-      # Router for webhook paths only
-      - "traefik.http.routers.frp-webhook.rule=Host(`frp.${DOMAIN}`) && PathPrefix(`/webhook`)"
-      - "traefik.http.routers.frp-webhook.entrypoints=websecure"
-      - "traefik.http.routers.frp-webhook.tls=true"
-      - "traefik.http.routers.frp-webhook.tls.certresolver=myresolver"
-      
-      # Router for blocking all other paths on the frp subdomain
-      - "traefik.http.routers.frp-block.rule=Host(`frp.${DOMAIN}`)"
-      - "traefik.http.routers.frp-block.entrypoints=websecure"
-      - "traefik.http.routers.frp-block.tls=true"
-      - "traefik.http.routers.frp-block.tls.certresolver=myresolver"
-      - "traefik.http.routers.frp-block.middlewares=block-non-webhook"
-      - "traefik.http.routers.frp-block.service=noop@internal"
+      - "EMAIL=${EMAIL}"
+      - "DOMAIN=${DOMAIN}"
+      - "ADMIN_CIDR=${ADMIN_CIDR}"
 
 networks:
   main:
