@@ -5,16 +5,16 @@ services:
     command: serve
     restart: unless-stopped
     volumes:
-      - /home/ec2-user/ntfy/ntfy-data:/var/lib/ntfy
-      - /home/ec2-user/ntfy/ntfy-cache:/var/cache/ntfy
-      - /home/ec2-user/ntfy/init-script.sh:/docker-entrypoint-init.d/init-script.sh
+      - ${HOST_ROOT}/ntfy-data:/var/lib/ntfy
+      - ${HOST_ROOT}/ntfy-cache:/var/cache/ntfy
+      - ${HOST_ROOT}/init-script.sh:/docker-entrypoint-init.d/init-script.sh
     environment:
-      - TZ=America/Denver  # Set your timezone here
+      - TZ=${TZ} # Set your timezone here
       # Use CloudFront URL as base URL if you have a custom CloudFront domain
       - NTFY_BASE_URL=https://ntfy.${DOMAIN}
-      - NTFY_WEB_ROOT=disable
+      #- NTFY_WEB_ROOT=disable
       - NTFY_ENABLE_LOGIN=true
-      - NTFY_BEHIND_PROXY=true
+      #- NTFY_BEHIND_PROXY=true
       - NTFY_KEEPALIVE_INTERVAL=55s  # CloudFront timeout is 60s
       # Add authentication if needed
       - NTFY_AUTH_FILE=/var/lib/ntfy/auth.db
