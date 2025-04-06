@@ -32,6 +32,7 @@ services:
       - "traefik.http.routers.frp-webhook.tls=true"
       - "traefik.http.routers.frp-webhook.tls.certresolver=myresolver"
       - "traefik.http.services.frp-webhook.loadbalancer.server.port=8080"
+      - "traefik.http.routers.frp-webhook.middlewares=frp-headers"
       
       # Router for blocking all other paths on the frp subdomain
       - "traefik.http.routers.frp-block.rule=Host(`frp.${DOMAIN}`)"
@@ -43,8 +44,9 @@ services:
       - "traefik.http.middlewares.block-non-webhook.errors.query=Access Denied: Path Not Allowed"
       - "traefik.http.routers.frp-block.middlewares=block-non-webhook"
       - "traefik.http.routers.frp-block.service=noop@internal"
+      - "traefik.http.routers.frp-block.priority=1" # Lower priority than the webhook router
       
-      # Handling HTTP to HTTPS redirect
+      # Handling HTTP to HTTPS redirect - uses global middleware defined in Traefik
       - "traefik.http.routers.frp-http.rule=Host(`frp.${DOMAIN}`) || HostRegexp(`{subdomain:[a-z0-9-]+}.frp.${DOMAIN}`)"
       - "traefik.http.routers.frp-http.entrypoints=web"
       - "traefik.http.routers.frp-http.middlewares=redirect-to-https"
@@ -52,7 +54,6 @@ services:
       # Headers for proper proxy behavior
       - "traefik.http.middlewares.frp-headers.headers.customRequestHeaders.X-Forwarded-Proto=https"
       - "traefik.http.middlewares.frp-headers.headers.customRequestHeaders.X-Forwarded-Host=frp.${DOMAIN}"
-      - "traefik.http.routers.frp.middlewares=frp-headers"
 
 networks:
   main:

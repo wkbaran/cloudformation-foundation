@@ -17,6 +17,7 @@ services:
       - "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
       - "AWS_REGION=${AWS_REGION}"
     labels:
+      - "traefik.log.level=DEBUG"
       - "traefik.enable=true"
       # Dashboard configuration with wildcard cert
       - "traefik.http.routers.dashboard.rule=Host(`jobs.${DOMAIN}`)"
@@ -28,9 +29,9 @@ services:
       - "traefik.http.routers.dashboard.middlewares=dashboard-ipwhitelist"
       
       # HTTP to HTTPS redirect
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
       - "traefik.http.routers.dashboard-http.rule=Host(`jobs.${DOMAIN}`)"
       - "traefik.http.routers.dashboard-http.entrypoints=web"
-      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
       - "traefik.http.routers.dashboard-http.middlewares=redirect-to-https"
       
       # Generate wildcard certificate
