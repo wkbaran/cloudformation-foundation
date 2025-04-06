@@ -6,3 +6,4 @@ scp -i ~/.ssh/minecraftkey.pem traefik.gen.yaml ec2-user@jobs.${DOMAIN}:traefik/
 envsubst < config/dashboard.yaml > config/dashboard.gen.yaml
 scp -i ~/.ssh/minecraftkey.pem config/dashboard.gen.yaml ec2-user@jobs.${DOMAIN}:traefik/config/dashboard.yaml
 ../jobsdock.sh compose up -d
+rm traefik.gen.yaml config/dashboard.gen.yaml
