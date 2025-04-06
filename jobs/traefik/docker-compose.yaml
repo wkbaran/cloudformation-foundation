@@ -8,6 +8,8 @@ services:
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
       - "/home/ec2-user/traefik/letsencrypt:/letsencrypt"
+      - "/home/ec2-user/traefik/traefik.yaml:/etc/traefik/traefik.yaml"
+      - "/home/ec2-user/traefik/config:/etc/traefik/config"
     ports:
       - "80:80"
       - "443:443"
