@@ -12,13 +12,15 @@ services:
       - TZ=${TZ} # Set your timezone here
       # Use CloudFront URL as base URL if you have a custom CloudFront domain
       - NTFY_BASE_URL=https://ntfy.${DOMAIN}
-      #- NTFY_WEB_ROOT=disable
+      - NTFY_WEB_ROOT=disable
       - NTFY_ENABLE_LOGIN=true
       #- NTFY_BEHIND_PROXY=true
       - NTFY_KEEPALIVE_INTERVAL=55s  # CloudFront timeout is 60s
       # Add authentication if needed
       - NTFY_AUTH_FILE=/var/lib/ntfy/auth.db
       - NTFY_AUTH_DEFAULT_ACCESS=deny
+      #- NTFY_LOG_LEVEL=debug
+
       # Vars used by init-script.sh
       - ADMINUSER=${ADMINUSER}
       - ADMINPASS=${ADMINPASS}
