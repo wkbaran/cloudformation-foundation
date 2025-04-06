@@ -1,0 +1,42 @@
+log:
+  level: DEBUG
+
+api:
+  dashboard: true
+  insecure: true  # Set to true temporarily for debugging (change to false later)
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: myresolver
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: main
+  
+  file:
+    directory: "/etc/traefik/config"
+    watch: true
+
+certificatesResolvers:
+  myresolver:
+    acme:
+      email: "${EMAIL}"
+      storage: "/letsencrypt/acme.json"
+      dnsChallenge:
+        provider: route53
+        resolvers:
+          - "1.1.1.1:53"
+          - "8.8.8.8:53"

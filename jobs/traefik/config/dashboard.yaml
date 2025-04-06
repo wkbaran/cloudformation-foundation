@@ -1,0 +1,26 @@
+http:
+  middlewares:
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+        
+  routers:
+    dashboard:
+      rule: "Host(`jobs.${DOMAIN}`)"
+      entrypoints:
+        - websecure
+      service: api@internal
+      tls:
+        certResolver: myresolver
+    
+    cert-wildcard:
+      rule: "Host(`wildcard-cert.${DOMAIN}`)"
+      entrypoints:
+        - websecure
+      service: noop@internal
+      tls:
+        certResolver: myresolver
+        domains:
+          - main: "${DOMAIN}"
+            sans:
+              - "*.${DOMAIN}"
