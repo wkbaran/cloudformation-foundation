@@ -1,0 +1,22 @@
+services:
+  glances:
+    container_name: glances
+    image: nicolargo/glances:4.3.1-full
+    restart: unless-stopped
+    pid: "host"
+    networks: 
+     - main
+    environment:
+      - TZ
+      - GLANCES_OPT=-w  # disable term ui
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "61208:61208"
+      - "61209:61209"
+    labels:
+      - "coredns.dockerdiscovery.host=glances.home"
+
+networks:
+  main:
+    external: true
